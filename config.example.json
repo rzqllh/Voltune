@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "ui": {
+    "safe_mode": true,
+    "dry_run": false,
+    "pause_after_action": true
+  },
+  "gaming_mode": {
+    "kill_browsers_comm": ["msedge.exe","firefox.exe","opera.exe","brave.exe","vivaldi.exe","Teams.exe","Discord.exe","zoom.exe","slack.exe","Skype.exe","telegram.exe","whatsapp.exe"],
+    "kill_cloud_sync": ["OneDrive.exe","googledrivesync.exe","GoogleDriveFS.exe","dropbox.exe","BoxSync.exe"],
+    "kill_vendor_optional": ["MSI.TerminalServer.exe","MSI_LAN_Manager_Tool.exe","DSATray.exe","IntelGraphicsSoftware.exe","NAHIMICUI3.exe","SonicStudio3.exe"],
+    "services_stop": ["WSearch","SysMain","CDPSvc","DiagTrack","WerSvc"],
+    "set_high_performance": true
+  },
+  "startup_apps": {
+    "OneDrive": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","OneDrive"],
+    "Teams": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","com.squirrel.Teams.Teams"],
+    "Discord": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","Discord"],
+    "Spotify": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","Spotify"],
+    "Steam": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","Steam"],
+    "Skype": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","Skype"],
+    "Adobe GC": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","AdobeGCInvoker-1.0"],
+    "CCleaner": ["HKLM","Software\\Microsoft\\Windows\\CurrentVersion\\Run","CCleaner64"],
+    "Google Update": ["HKCU","Software\\Microsoft\\Windows\\CurrentVersion\\Run","Google Update"]
+  },
+  "bloat_apps": [
+    ["Xbox","*Xbox*","Microsoft Consumer"],["Bing News","*BingNews*","Microsoft Consumer"],["Bing Weather","*BingWeather*","Microsoft Consumer"],["Groove Music","*ZuneMusic*","Media"],["Movies & TV","*ZuneVideo*","Media"],["Skype builtin","*SkypeApp*","Communication"],["Mixed Reality Portal","*MixedReality*","Optional"],["Get Help","*GetHelp*","Optional"],["Get Started / Tips","*Getstarted*","Optional"],["Solitaire","*MicrosoftSolitaire*","Microsoft Consumer"],["Teams builtin","*MicrosoftTeams*","Communication"],["Clipchamp","*ClipChamp*","Media"],["Disney+","*Disney*","Microsoft Consumer"],["TikTok","*TikTok*","Microsoft Consumer"],["Instagram","*Instagram*","Microsoft Consumer"],["Facebook","*Facebook*","Microsoft Consumer"],["Prime Video","*AmazonVideo*","Media"],["Spotify builtin","*SpotifyAB*","Media"],["Power Automate","*PowerAutomate*","Optional"],["People","*People*","Optional"],["Mail and Calendar","*windowscommunicationsapps*","Communication"],["Maps","*WindowsMaps*","Optional"],["Feedback Hub","*WindowsFeedbackHub*","Optional"],["Phone Link","*YourPhone*","Communication"],["3D Viewer","*Microsoft3DViewer*","Optional"]
+  ],
+  "dns_providers": [
+    {"name":"Cloudflare","primary":"1.1.1.1","secondary":"1.0.0.1"},
+    {"name":"Google","primary":"8.8.8.8","secondary":"8.8.4.4"},
+    {"name":"Quad9","primary":"9.9.9.9","secondary":"149.112.112.112"},
+    {"name":"OpenDNS","primary":"208.67.222.222","secondary":"208.67.220.220"},
+    {"name":"CleanBrowsing","primary":"185.228.168.9","secondary":"185.228.169.9"}
+  ],
+  "dns_test_domains": ["google.com","youtube.com","github.com","microsoft.com","cloudflare.com"],
+  "latency_targets": [["1.1.1.1","Cloudflare"],["8.8.8.8","Google DNS"],["9.9.9.9","Quad9"]]
+}
