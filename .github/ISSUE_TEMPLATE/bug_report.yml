@@ -1,0 +1,32 @@
+name: Bug report
+description: Report reproducible Voltune behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: issue
+    attributes:
+      label: What happened?
+      description: Include the feature, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Windows build
+      placeholder: e.g. Windows 11 25H2 build ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Voltune version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log excerpt
+      description: Remove usernames, local IPs, paths, or other sensitive information first.
+      render: text

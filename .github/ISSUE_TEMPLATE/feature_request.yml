@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a useful Windows workflow
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user problem should Voltune solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the workflow, expected safety level, and restore behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety considerations
+      options:
+        - label: I considered whether this changes registry, services, boot, firewall, networking, or installed apps.
+          required: true

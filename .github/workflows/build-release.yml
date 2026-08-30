@@ -1,0 +1,49 @@
+name: Build release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Test
+        run: python -m pytest
+      - name: Build EXE
+        run: python -m PyInstaller --noconfirm --clean --onefile --uac-admin --name "Voltune" --paths src voltune.py
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash .\dist\Voltune.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  Voltune.exe" | Set-Content -Encoding ascii .\dist\SHA256SUMS.txt
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path .\dist\Voltune.exe)) { throw "Voltune.exe was not created" }
+          if (-not (Test-Path .\dist\SHA256SUMS.txt)) { throw "SHA256SUMS.txt was not created" }
+          Get-Item .\dist\Voltune.exe | Select-Object Name, Length
+          Get-Content .\dist\SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voltune-windows-x64
+          path: |
+            dist/Voltune.exe
+            dist/SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/Voltune.exe
+            dist/SHA256SUMS.txt
