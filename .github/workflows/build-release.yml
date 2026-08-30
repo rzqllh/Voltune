@@ -35,7 +35,7 @@ jobs:
           if (-not (Test-Path .\dist\SHA256SUMS.txt)) { throw "SHA256SUMS.txt was not created" }
           Get-Item .\dist\Voltune.exe | Select-Object Name, Length
           Get-Content .\dist\SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: voltune-windows-x64
           path: |
