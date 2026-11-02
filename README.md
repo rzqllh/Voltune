@@ -6,9 +6,9 @@
 
 **Universal Hardware-Aware Windows Performance, Gaming, Maintenance & Recovery Toolkit.**
 
-Voltune v2.0 Next-Gen mengadopsi model distribusi instan one-liner ala Chris Titus Tech (`winutil`), dengan antarmuka berbahasa Indonesia yang santai dan ramah pengguna, dipersenjatai **Hardware-Aware Display & Game Auto-Configurator** serta **VoltClean Safe Disk Cleanup**.
+Voltune v3.0 Ultimate mengadopsi model distribusi instan one-liner ala Chris Titus Tech (`winutil`), dilengkapi **Modern Native WPF GUI Desktop Hub**, **Hardware-Aware Display & Game Auto-Configurator**, **TCP/IP Gaming Latency Optimizer (Zero-VPN Harm)**, **Windows Services Optimizer**, **Windows Update Security-Only Lock**, serta pembersih disk lintas-drive **VoltClean** dan pemulihan 1-klik **VoltUndo**.
 
-> **Safe by default. Reversible by design. Zero VPN harm.**
+> **Safe by default. Reversible by design. 100% Dynamic. Zero VPN harm.**
 
 ---
 
@@ -22,28 +22,55 @@ irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex
 
 Atau jalankan secara lokal dari direktori repositori:
 ```powershell
+# Jalankan menu interaktif Terminal (TUI)
 .\voltune.ps1
+
+# Atau buka Modern Native WPF Desktop Window (GUI)
+.\voltune.ps1 -GUI
 ```
 
 ---
 
-## 🚀 Fitur Unggulan v2.0 (Next-Gen)
+## 🚀 Fitur Unggulan v3.0 (Ultimate)
 
-1. **Hardware-Aware Detection:**
-   - Mendeteksi dinamis arsitektur CPU Intel (Hybrid P+E Cores) dan AMD Ryzen.
-   - Dual GPU Parity: Optimasi spesifik kartu grafis **NVIDIA GeForce** (Shader Cache 10GB, Low Latency, Adaptive FPS Capping) dan **AMD Radeon** (Anti-Lag, Radeon Chill, Shader Cache).
-   - Mendeteksi refresh rate monitor (60Hz s/d 240Hz) dan menyelaraskan frame limiter agar bebas stutter dan thermal-throttle.
-2. **VoltPlay (Game Auto-Configurator):**
-   - Memindai game terpasang (Red Dead Redemption 2, Honkai: Star Rail, Genshin Impact, The Witcher 3: Wild Hunt).
-   - Menyelaraskan setting in-game (Async compute, DLSS-G, reflection/light quality) agar bebas drop FPS di area berat.
-3. **VoltClean (Pembersih Disk Aman):**
-   - Membersihkan `%TEMP%`, `C:\Windows\Temp`, DirectX `D3DSCache`, crash dumps, dan Recycle Bin.
-   - Menjaga integritas data: otomatis melewati cache aplikasi yang sedang aktif (Chrome, Game, dsb.) dan dilarang keras menyentuh service VPN (`PanGPS` GlobalProtect) atau koneksi internet pengguna.
-4. **VoltUndo (1-Klik Pemulihan Total):**
-   - Membuat cadangan otomatis snapshot registri dan salinan `.bak` game config sebelum ada perubahan apa pun.
-   - Fitur Undo mengembalikan seluruh konfigurasi ke kondisi semula hanya dengan satu pilihan menu.
-5. **Core Legacy Engine:**
-   - Modul Python CLI teknis offline tetap tersedia di direktori `src/` untuk diagnostik mendalam, DNS benchmark, dan analisis disk.
+1. **Modern Native WPF Desktop GUI (`-GUI` / Hotkey `G`):**
+   - Tampilan grafis modern bertema dark mode dengan telemetri hardware real-time.
+   - Tab navigasi lengkap: Dashboard, Gaming & VoltPlay, QoL & Privasi, Software & Runtimes, VoltClean, System Health, dan VoltUndo.
+   - Berjalan murni di atas runtime .NET bawaan Windows (tanpa dependensi eksternal).
+2. **Dynamic Hardware & Game Ecosystem Engine:**
+   - Deteksi otomatis arsitektur CPU Intel (Hybrid P+E Cores) dan AMD Ryzen.
+   - Dual-GPU Parity: Mendeteksi NVIDIA GeForce RTX (VRAM & TGP Wattage via `nvidia-smi`), AMD Radeon, dan Intel iGPU.
+   - Pemindaian Game Lintas-Drive Dinamis: Membaca seluruh library Steam di C: dan D:, HoYoPlay (HSR & Genshin), Rockstar (RDR2), dan CDPR (Cyberpunk / The Witcher 3).
+   - Dynamic FPS Capping (VRR TearFree vs Battery Saver).
+3. **TCP/IP Gaming Latency Optimizer (Zero-VPN Harm):**
+   - Menonaktifkan Nagle's Algorithm (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) pada adapter fisik (Ethernet & Wi-Fi).
+   - **Strict Whitelist Safety Guard:** Menjamin adapter virtual, TAP, dan Palo Alto GlobalProtect (`PanGPS`) dilewati secara aman tanpa merusak koneksi VPN perusahaan.
+   - Menonaktifkan Network Throttling Index (`0xFFFFFFFF`) & `SystemResponsiveness = 0`.
+4. **Windows Services Optimizer (Safe Gaming Profile):**
+   - Mengoptimalkan layanan latar belakang bloat (`DiagTrack`, `dmwappushservice`, `MapsBroker`, `lfsvc`, `RemoteRegistry`, Xbox on-demand).
+   - Layanan audio, printing, dan network VPN tetap terjaga 100%.
+5. **Windows 11 QoL & Deep Privacy:**
+   - Classic Right-Click Context Menu (Windows 10 style).
+   - File Explorer Pro (tampilkan ekstensi file, buka ke This PC, tampilkan hidden files).
+   - Taskbar Clean (sembunyikan Widgets RAM hog, Copilot, & Task View).
+   - Matikan Windows Recall AI snapshot (Win11 24H2), Copilot system-wide, dan iklan Start Menu.
+6. **Windows Update Control (Security Updates Only):**
+   - Menunda feature update tahunan 365 hari agar OS selalu stabil.
+   - Mencegah restart mendadak saat user aktif bekerja (`NoAutoRebootWithLoggedOnUsers = 1`).
+   - Memblokir pembajakan driver GPU/Audio oleh Windows Update.
+7. **Game Runtimes & Software Catalog (WinGet One-Click):**
+   - 1-Klik pasang Visual C++ 2005-2022 AIO (x86 & x64), DirectX Runtimes, dan .NET Desktop Runtime.
+   - Katalog instalasi software terkurasi: Steam, Discord, OBS, RTSS, VS Code, Git, Terminal, Everything.
+   - Selective Appx Debloater untuk menghapus bloatware bawaan (BingNews, Weather, Solitaire, Clipchamp).
+8. **VoltClean Cross-Drive Cleaner:**
+   - Membersihkan `%TEMP%`, `C:\Windows\Temp`, shader cache multi-vendor (NVIDIA, AMD, Intel, DirectX), shader Steam di semua drive (C: & D:), crash dumps, dan Recycle Bin.
+   - Dilindungi Dynamic Process Guard (melewati file yang sedang dikunci game/browser aktif).
+9. **System Health & Diagnostic Suite:**
+   - SFC /scannow, DISM RestoreHealth, DISM Component Store ResetBase.
+   - 1-Klik Reset Windows Update, 1-Klik Reset Network & Winsock catalog, Rebuild Icon cache, dan Trim Standby Memory.
+10. **VoltUndo (1-Klik Pemulihan Total & System Restore):**
+    - Otomatis membuat Windows System Restore Point dan snapshot registri (`.reg`) serta file config (`.bak`).
+    - 1-Klik Undo mengembalikan seluruh settingan ke kondisi awal dengan sempurna.
 
 ---
 

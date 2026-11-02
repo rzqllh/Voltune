@@ -19,7 +19,7 @@ if ($parseErrors.Count -eq 0) {
 
 # Extract functions
 $functionsOnly = $content -replace '(?s)^.*?function Test-IsAdmin', 'function Test-IsAdmin'
-$functionsOnly = $functionsOnly -replace '(?s)# 11\. ENTRYPOINT LOGIC.*', ''
+$functionsOnly = $functionsOnly -replace '(?s)#\s*\d+\.\s*ENTRYPOINT LOGIC.*', ''
 
 . ([ScriptBlock]::Create($functionsOnly))
 

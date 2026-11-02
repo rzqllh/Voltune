@@ -2,6 +2,19 @@
 
 All notable changes to Voltune are documented here.
 
+## [3.0.0-Ultimate] - 2026-11-02
+
+### Added
+- **Modern Native WPF Desktop GUI (`Show-VoltGUI`):** Built-in dark mode WPF desktop window launched via `.\voltune.ps1 -GUI` or hotkey `[G]`, featuring real-time hardware telemetry, tabbed categories (Dashboard, Gaming, QoL & Privacy, Software, VoltClean, System Health, VoltUndo) with zero external binary dependencies.
+- **TCP/IP Gaming Latency Optimizer (Zero-VPN Harm):** Nagle's Algorithm disabled (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) on active physical Ethernet & Wi-Fi adapters with strict whitelist protection for Palo Alto GlobalProtect (`PanGPS`), VPNs, and virtual adapters; network throttling disabled (`NetworkThrottlingIndex = 0xFFFFFFFF`, `SystemResponsiveness = 0`).
+- **Windows Services Optimizer:** Safe gaming profile setting non-essential background services (`DiagTrack`, `dmwappushservice`, `MapsBroker`, `lfsvc`, `RemoteRegistry`, `RetailDemo`, `WerSvc`, `Xbox` services) to Manual/Disabled with explicit preservation of audio, printing, and VPN services.
+- **Windows Update Control (Security Updates Only):** 365-day feature update deferral, driver hijack prevention (`ExcludeWUDriversInQualityUpdate = 1`), unexpected restart prevention (`NoAutoRebootWithLoggedOnUsers = 1`), and active hours maximized.
+- **Deep Windows 11 Privacy & Anti-Bloat:** System-wide disabling of Windows Recall AI screen capture, Copilot, Cortana, Bing search suggestions in Start, advertising IDs, activity history, and delivery optimization P2P upload.
+- **Software Catalog & Game Runtimes Installer (WinGet):** 1-click installer for Visual C++ 2005-2022 AIO, DirectX End-User Runtimes, .NET Desktop Runtime 8, plus curated suites for Gaming (Steam, Epic, Discord, OBS, RTSS), Development (VS Code, Git, Terminal), and System Utilities.
+- **Windows Optional Features Manager:** 1-click toggles for DirectPlay (legacy gaming runtime), WSL2, and Windows Sandbox.
+- **System Health & Diagnostic Suite:** SFC scannow, DISM Online RestoreHealth, DISM Component Store ResetBase, 1-click Windows Update reset, 1-click Network/Winsock repair, Icon/Thumbnail cache rebuild, and Standby Memory working set trim.
+- **System Restore Point Automation:** Automatic creation of Windows System Restore points (`Checkpoint-Computer`) prior to running batch optimizations.
+
 ## [2.0.0-NextGen] - 2026-11-02
 
 ### Added
