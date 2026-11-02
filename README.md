@@ -22,46 +22,44 @@ irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex
 
 Atau jalankan secara lokal dari direktori repositori:
 ```powershell
-# Jalankan menu interaktif Terminal (TUI)
+# Langsung buka Modern Native WPF Desktop Window (GUI - Mode Default)
 .\voltune.ps1
 
-# Atau buka Modern Native WPF Desktop Window (GUI)
-.\voltune.ps1 -GUI
+# Atau jalankan menu interaktif Terminal (CLI / TUI)
+.\voltune.ps1 -CLI
 ```
 
 ---
 
-## 🚀 Fitur Unggulan v3.0 (Ultimate)
+## 🚀 Fitur Unggulan v3.2 (Universal Ultimate)
 
-1. **Modern Native WPF Desktop GUI (`-GUI` / Hotkey `G`):**
-   - Tampilan grafis modern bertema dark mode dengan telemetri hardware real-time.
-   - Tab navigasi lengkap: Dashboard, Gaming & VoltPlay, QoL & Privasi, Software & Runtimes, VoltClean, System Health, dan VoltUndo.
-   - Berjalan murni di atas runtime .NET bawaan Windows (tanpa dependensi eksternal).
-2. **Dynamic Hardware & Game Ecosystem Engine:**
-   - Deteksi otomatis arsitektur CPU Intel (Hybrid P+E Cores) dan AMD Ryzen.
-   - Dual-GPU Parity: Mendeteksi NVIDIA GeForce RTX (VRAM & TGP Wattage via `nvidia-smi`), AMD Radeon, dan Intel iGPU.
-   - Pemindaian Game Lintas-Drive Dinamis: Membaca seluruh library Steam di C: dan D:, HoYoPlay (HSR & Genshin), Rockstar (RDR2), dan CDPR (Cyberpunk / The Witcher 3).
-   - Dynamic FPS Capping (VRR TearFree vs Battery Saver).
-3. **TCP/IP Gaming Latency Optimizer (Zero-VPN Harm):**
+1. **Modern Native WPF Desktop GUI (Default Mode & In-Window Hub):**
+   - Tampilan antarmuka grafis bertema dark mode dengan kontrol 100% di dalam GUI (tanpa perlu mengetik di terminal).
+   - **Dynamic Live State Inspection**: Checkbox pada tab *Tweaks* otomatis memeriksa dan mencentang konfigurasi yang sudah aktif di Windows Anda saat ini.
+   - **Customizable Preset Controls**: Memilih preset (`Recommended`, `Laptop Gaming`, `Desktop Max`, `Minimal Privacy`) hanya mengubah centang yang direkomendasikan sehingga Anda bebas menyesuaikan sebelum mengeksekusi dengan tombol sticky *Terapkan*.
+   - **Sticky Bottom Action Bar**: Tombol aksi utama (*Terapkan*, *Undo*, *Snapshot*, *Install Apps*) dipin di bagian bawah tab sehingga selalu terlihat tanpa tertutup scroll.
+2. **Katalog Software WinGet Komprehensif (Chris Titus Style - 50+ Apps):**
+   - 8 Kategori lengkap: *Game Runtimes (VC++ AIO, DirectX, .NET 8/9, Java), Web Browsers, Gaming & Launchers, Hardware & Monitoring, Dev Tools, System Utilities, Media & Audio, Documents & Office*.
+   - Dilengkapi preset 1-klik (*All Game Runtimes, Gaming Essentials, Developer Suite, Web Browsers, System Utilities*).
+3. **Universal Game Discovery Engine (8-Source Multi-Drive Scanner):**
+   - Memindai game secara dinamis dari Steam (semua drive via `libraryfolders.vdf`), Epic Games Store Manifests (`*.item`), GOG Galaxy, Ubisoft Connect, HoYoPlay (`C:\Program Files\HoYoPlay`, `Star Rail Games`), folder game standalone (`C:\Games\*`, `D:\Games\*`), registry uninstall, serta dokumen game setting (RDR2, The Witcher 3 DX12).
+   - Mendaftarkan seluruh game terdeteksi ke GPU Discrete High Performance di Windows Settings dengan 1-klik.
+4. **TCP/IP Gaming Latency Optimizer (Zero-VPN Harm):**
    - Menonaktifkan Nagle's Algorithm (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) pada adapter fisik (Ethernet & Wi-Fi).
    - **Strict Whitelist Safety Guard:** Menjamin adapter virtual, TAP, dan Palo Alto GlobalProtect (`PanGPS`) dilewati secara aman tanpa merusak koneksi VPN perusahaan.
    - Menonaktifkan Network Throttling Index (`0xFFFFFFFF`) & `SystemResponsiveness = 0`.
-4. **Windows Services Optimizer (Safe Gaming Profile):**
+5. **Windows Services Optimizer (Safe Gaming Profile):**
    - Mengoptimalkan layanan latar belakang bloat (`DiagTrack`, `dmwappushservice`, `MapsBroker`, `lfsvc`, `RemoteRegistry`, Xbox on-demand).
    - Layanan audio, printing, dan network VPN tetap terjaga 100%.
-5. **Windows 11 QoL & Deep Privacy:**
+6. **Windows 11 QoL & Deep Privacy:**
    - Classic Right-Click Context Menu (Windows 10 style).
    - File Explorer Pro (tampilkan ekstensi file, buka ke This PC, tampilkan hidden files).
    - Taskbar Clean (sembunyikan Widgets RAM hog, Copilot, & Task View).
    - Matikan Windows Recall AI snapshot (Win11 24H2), Copilot system-wide, dan iklan Start Menu.
-6. **Windows Update Control (Security Updates Only):**
+7. **Windows Update Control (Security Updates Only):**
    - Menunda feature update tahunan 365 hari agar OS selalu stabil.
    - Mencegah restart mendadak saat user aktif bekerja (`NoAutoRebootWithLoggedOnUsers = 1`).
    - Memblokir pembajakan driver GPU/Audio oleh Windows Update.
-7. **Game Runtimes & Software Catalog (WinGet One-Click):**
-   - 1-Klik pasang Visual C++ 2005-2022 AIO (x86 & x64), DirectX Runtimes, dan .NET Desktop Runtime.
-   - Katalog instalasi software terkurasi: Steam, Discord, OBS, RTSS, VS Code, Git, Terminal, Everything.
-   - Selective Appx Debloater untuk menghapus bloatware bawaan (BingNews, Weather, Solitaire, Clipchamp).
 8. **VoltClean Cross-Drive Cleaner:**
    - Membersihkan `%TEMP%`, `C:\Windows\Temp`, shader cache multi-vendor (NVIDIA, AMD, Intel, DirectX), shader Steam di semua drive (C: & D:), crash dumps, dan Recycle Bin.
    - Dilindungi Dynamic Process Guard (melewati file yang sedang dikunci game/browser aktif).
