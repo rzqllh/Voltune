@@ -1910,8 +1910,8 @@ function Show-VoltSpecs ($hw) {
     Write-Host "   Status HAGS: $(if ($hw.HAGS_Status) { 'Aktif [✓]' } else { 'Nonaktif [!]' }) | Hibernate: $hiberStr" -ForegroundColor White
 
     # Discovered Games Summary
-    $gameList = $hw.DiscoveredGames.Values | Select-Object -ExpandProperty Name
-    $gameStr = if ($gameList) { ($gameList | Select-Object -Unique) -join ", " } else { "Tidak terdeteksi" }
+    $gameList = @(foreach ($g in $hw.DiscoveredGames.Values) { $g["Name"] })
+    $gameStr = if ($gameList.Count -gt 0) { ($gameList | Select-Object -Unique) -join ", " } else { "Tidak terdeteksi" }
     Write-Host "   Game Nemu  : $gameStr ($($hw.DiscoveredGames.Count) game terdeteksi dinamis)" -ForegroundColor White
 }
 
