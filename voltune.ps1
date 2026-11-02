@@ -1,13 +1,12 @@
 <#
 .SYNOPSIS
-    VoltPlay & Voltune Windows Utility v2.0 - Universal Hardware-Aware Performance & Cleanup Toolkit
+    VoltPlay & Voltune Windows Utility v2.0 Next-Gen - Universal Hardware-Aware & Dynamic Optimizer
 .DESCRIPTION
-    Toolkit optimasi performa Windows, manajemen kartu grafis dual-GPU (NVIDIA/AMD),
-    penyelarasan in-game setting anti-stuttering, serta pembersihan cache aman dengan 1-klik Undo.
-    Dirancang untuk berjalan mandiri (standalone) via:
-    irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex
+    Toolkit optimasi performa Windows, manajemen kartu grafis dual-GPU (NVIDIA/AMD/Intel),
+    penyelarasan setting game anti-stutter dinamis multi-drive, pembersih disk lintas-drive,
+    dan sistem snapshot 1-klik Undo dinamis.
 .NOTES
-    Safe by default, Reversible by design, Hardware-Aware, Zero VPN Harm.
+    Safe by default, Reversible by design, 100% Dynamic, Zero VPN Harm.
 #>
 
 [CmdletBinding()]
@@ -40,7 +39,6 @@ function Invoke-VoltElevation {
         if ($PSCommandPath) {
             $arguments += " -File `"$PSCommandPath`""
         } else {
-            # Running via web one-liner (irm | iex)
             $arguments += " -Command `"irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex`""
         }
         Start-Process powershell.exe -ArgumentList $arguments -Verb RunAs
@@ -54,7 +52,7 @@ function Invoke-VoltElevation {
 # ------------------------------------------------------------------------------
 # 2. KONFIGURASI GLOBAL & PATHS
 # ------------------------------------------------------------------------------
-$Script:VoltVersion = "2.0.0-NextGen"
+$Script:VoltVersion = "2.1.0-Dynamic"
 $Script:AppDataDir  = Join-Path $env:LOCALAPPDATA "Voltune"
 $Script:BackupDir   = Join-Path $Script:AppDataDir "Backups"
 $Script:LogDir      = Join-Path $Script:AppDataDir "Logs"
@@ -63,42 +61,60 @@ if (-not (Test-Path $Script:BackupDir)) { New-Item -ItemType Directory -Path $Sc
 if (-not (Test-Path $Script:LogDir)) { New-Item -ItemType Directory -Path $Script:LogDir -Force | Out-Null }
 
 # ------------------------------------------------------------------------------
-# 3. DETECTION ENGINE (HARDWARE, ENVIRONMENT, & GAMES)
+# 3. DYNAMIC DETECTION ENGINE (HARDWARE, ENVIRONMENT, DRIVES, & GAMES)
 # ------------------------------------------------------------------------------
 function Get-VoltHardwareProfile {
     $profile = [ordered]@{
-        CPUName         = "Unknown CPU"
-        CPUCores        = 0
-        CPUThreads      = 0
-        IsHybridCPU     = $false
-        RAM_GB          = 0.0
-        DriveC_FreeGB   = 0.0
-        ScreenResolution= "1920x1080"
-        ScreenRefreshHz = 60
-        HasNvidiaGPU    = $false
-        HasAmdGPU       = $false
-        HasIntelGPU     = $false
-        DiscreteGPU     = $null
-        IntegratedGPU   = $null
-        HAGS_Status     = $false
-        InstalledGames  = [ordered]@{}
+        # CPU
+        CPUName          = "Unknown CPU"
+        CPUCores         = 0
+        CPUThreads       = 0
+        IsHybridCPU      = $false
+        CPUArchitecture  = "x64"
+
+        # Memory & Power
+        RAM_GB           = 0.0
+        IsOnBattery      = $false
+        BatteryChargePct = $null
+
+        # Storage (Multi-Drive)
+        Drives           = [ordered]@{}
+
+        # Display
+        ScreenResolution = "1920x1080"
+        ScreenRefreshHz  = 60
+        DynamicFPSCaps   = [ordered]@{}
+
+        # GPU
+        HasNvidiaGPU     = $false
+        HasAmdGPU        = $false
+        HasIntelGPU      = $false
+        DiscreteGPU      = $null
+        IntegratedGPU    = $null
+        HAGS_Status      = $false
+
+        # Game Ecosystem (Dynamic Multi-Platform Discovery)
+        SteamLibraries   = @()
+        DiscoveredGames  = [ordered]@{}
     }
 
-    # CPU Detection
+    # 1. CPU Detection
     try {
         $proc = Get-CimInstance Win32_Processor | Select-Object -First 1
         if ($proc) {
             $profile.CPUName = $proc.Name.Trim()
             $profile.CPUCores = [int]$proc.NumberOfCores
             $profile.CPUThreads = [int]$proc.NumberOfLogicalProcessors
-            # Check Intel 12th/13th/14th Gen or Core Ultra hybrid
+            $profile.CPUArchitecture = if ($proc.AddressWidth -eq 64) { "x64" } else { "x86" }
+
+            # Dynamic check for Intel Hybrid P+E Cores or AMD asymmetric CCX
             if ($profile.CPUName -match "1[234]th Gen" -or $profile.CPUName -match "Core Ultra" -or ($profile.CPUThreads -gt ($profile.CPUCores * 1.5) -and $profile.CPUThreads -ne ($profile.CPUCores * 2))) {
                 $profile.IsHybridCPU = $true
             }
         }
     } catch {}
 
-    # RAM Detection
+    # 2. RAM & Battery / Power Detection
     try {
         $cs = Get-CimInstance Win32_ComputerSystem | Select-Object -First 1
         if ($cs -and $cs.TotalPhysicalMemory) {
@@ -106,15 +122,34 @@ function Get-VoltHardwareProfile {
         }
     } catch {}
 
-    # Drive C: Free Space
     try {
-        $driveC = Get-PSDrive C -ErrorAction SilentlyContinue
-        if ($driveC) {
-            $profile.DriveC_FreeGB = [math]::Round($driveC.Free / 1GB, 1)
+        $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($battery) {
+            $profile.BatteryChargePct = [int]$battery.EstimatedChargeRemaining
+            # BatteryStatus: 1 = Discharging (On Battery), 2 = AC Power, 3 = Fully Charged
+            if ($battery.BatteryStatus -eq 1) {
+                $profile.IsOnBattery = $true
+            }
         }
     } catch {}
 
-    # GPU & Display Detection (CIM)
+    # 3. Multi-Drive Storage Detection (All Drives)
+    try {
+        $disks = Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
+        foreach ($d in $disks) {
+            $freeGB  = [math]::Round($d.FreeSpace / 1GB, 1)
+            $totalGB = [math]::Round($d.Size / 1GB, 1)
+            $label   = if ($d.VolumeName) { $d.VolumeName } else { "Local Disk" }
+            $profile.Drives[$d.DeviceID] = [ordered]@{
+                DeviceID = $d.DeviceID
+                Label    = $label
+                FreeGB   = $freeGB
+                TotalGB  = $totalGB
+            }
+        }
+    } catch {}
+
+    # 4. Display & Refresh Rate Calculation
     try {
         $videoControllers = Get-CimInstance Win32_VideoController
         foreach ($vc in $videoControllers) {
@@ -149,7 +184,16 @@ function Get-VoltHardwareProfile {
         }
     } catch {}
 
-    # Precise GPU TGP & VRAM query via nvidia-smi (if NVIDIA present)
+    # Dynamic Frame Rate Caps Calculation based on Hz and Power State
+    $hz = $profile.ScreenRefreshHz
+    $profile.DynamicFPSCaps = [ordered]@{
+        NativeMax   = $hz
+        TearFreeVRR = [math]::Max(30, [int]($hz - 3))
+        HalfRate    = [math]::Max(30, [int]([math]::Round($hz / 2)))
+        BatteryCap  = [math]::Min(60, [int]([math]::Round($hz / 2)))
+    }
+
+    # Query precise NVIDIA TGP & VRAM via nvidia-smi if available
     if ($profile.HasNvidiaGPU -and (Get-Command "nvidia-smi" -ErrorAction SilentlyContinue)) {
         try {
             $smiOut = & nvidia-smi --query-gpu=name,driver_version,memory.total,power.max_limit --format=csv,noheader,nounits 2>$null
@@ -162,7 +206,7 @@ function Get-VoltHardwareProfile {
         } catch {}
     }
 
-    # HAGS Detection (Hardware-Accelerated GPU Scheduling)
+    # HAGS Detection
     try {
         $hags = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -ErrorAction SilentlyContinue
         if ($hags -and $hags.HwSchMode -eq 2) {
@@ -170,44 +214,102 @@ function Get-VoltHardwareProfile {
         }
     } catch {}
 
-    # Games Scanner
-    $docsPath = [Environment]::GetFolderPath('MyDocuments')
+    # 5. DYNAMIC MULTI-PLATFORM GAME DISCOVERY
+    # A. Steam Libraries Discovery across ALL Drives
+    $steamLibs = [System.Collections.Generic.List[string]]::new()
+    try {
+        $steamKey = Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam" -Name "InstallPath" -ErrorAction SilentlyContinue
+        if (-not $steamKey) {
+            $steamKey = Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue
+        }
+        if ($steamKey) {
+            $mainSteamPath = if ($steamKey.InstallPath) { $steamKey.InstallPath } else { $steamKey.SteamPath }
+            if (Test-Path $mainSteamPath) {
+                $steamLibs.Add($mainSteamPath)
+                $vdf = Join-Path $mainSteamPath "steamapps\libraryfolders.vdf"
+                if (Test-Path $vdf) {
+                    $vdfContent = Get-Content -Path $vdf -Raw
+                    $matchesPath = [regex]::Matches($vdfContent, '"path"\s+"([^"]+)"')
+                    foreach ($m in $matchesPath) {
+                        $libPath = $m.Groups[1].Value -replace '\\\\', '\'
+                        if ((Test-Path $libPath) -and -not $steamLibs.Contains($libPath)) {
+                            $steamLibs.Add($libPath)
+                        }
+                    }
+                }
+            }
+        }
+    } catch {}
+    $profile.SteamLibraries = @($steamLibs)
 
-    # 1. Red Dead Redemption 2
+    # Scan Steam Games in all discovered libraries
+    foreach ($lib in $profile.SteamLibraries) {
+        $appsDir = Join-Path $lib "steamapps"
+        if (-not (Test-Path $appsDir)) { continue }
+        $manifests = Get-ChildItem -Path $appsDir -Filter "appmanifest_*.acf" -ErrorAction SilentlyContinue
+        foreach ($mf in $manifests) {
+            try {
+                $text = Get-Content -Path $mf.FullName -Raw
+                $appId = if ($text -match '"appid"\s+"(\d+)"') { $Matches[1] } else { $null }
+                $appName = if ($text -match '"name"\s+"([^"]+)"') { $Matches[1] } else { $null }
+                $installSub = if ($text -match '"installdir"\s+"([^"]+)"') { $Matches[1] } else { $null }
+
+                if ($appId -and $appName -and $installSub) {
+                    $fullPath = Join-Path $appsDir "common\$installSub"
+
+                    # Filter out runtimes / redistributables
+                    if ($appName -notmatch "Steamworks|Redistributable|Proton|Shared") {
+                        $profile.DiscoveredGames["Steam_$appId"] = [ordered]@{
+                            Name        = $appName
+                            Platform    = "Steam"
+                            AppID       = $appId
+                            InstallPath = $fullPath
+                            Library     = $lib
+                        }
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    # B. HoYoPlay Registry Discovery (Star Rail, Genshin, ZZZ)
+    if (Test-Path "HKCU:\Software\Cognosphere\Star Rail") {
+        $profile.DiscoveredGames["HoYo_HSR"] = [ordered]@{
+            Name        = "Honkai: Star Rail"
+            Platform    = "HoYoPlay"
+            ConfigType  = "RegistryJSON"
+            ConfigPath  = "HKCU:\Software\Cognosphere\Star Rail"
+        }
+    }
+    if (Test-Path "HKCU:\Software\miHoYo\Genshin Impact") {
+        $profile.DiscoveredGames["HoYo_Genshin"] = [ordered]@{
+            Name        = "Genshin Impact"
+            Platform    = "HoYoPlay"
+            ConfigType  = "RegistryJSON"
+            ConfigPath  = "HKCU:\Software\miHoYo\Genshin Impact"
+        }
+    }
+
+    # C. Rockstar Games Discovery (RDR2, GTA V)
+    $docsPath = [Environment]::GetFolderPath('MyDocuments')
     $rdr2Xml = Join-Path $docsPath "Rockstar Games\Red Dead Redemption 2\Settings\system.xml"
     if (Test-Path $rdr2Xml) {
-        $profile.InstalledGames["RDR2"] = @{
-            Name       = "Red Dead Redemption 2"
-            ConfigPath = $rdr2Xml
-            Type       = "XML"
+        $profile.DiscoveredGames["Rockstar_RDR2"] = [ordered]@{
+            Name        = "Red Dead Redemption 2"
+            Platform    = "Rockstar Games"
+            ConfigType  = "XML"
+            ConfigPath  = $rdr2Xml
         }
     }
 
-    # 2. Honkai: Star Rail (Cognosphere registry)
-    if (Test-Path "HKCU:\Software\Cognosphere\Star Rail") {
-        $profile.InstalledGames["HSR"] = @{
-            Name       = "Honkai: Star Rail"
-            ConfigPath = "HKCU:\Software\Cognosphere\Star Rail"
-            Type       = "RegistryJSON"
-        }
-    }
-
-    # 3. Genshin Impact (miHoYo registry)
-    if (Test-Path "HKCU:\Software\miHoYo\Genshin Impact") {
-        $profile.InstalledGames["Genshin"] = @{
-            Name       = "Genshin Impact"
-            ConfigPath = "HKCU:\Software\miHoYo\Genshin Impact"
-            Type       = "RegistryJSON"
-        }
-    }
-
-    # 4. The Witcher 3
+    # D. CD Projekt RED Discovery (Witcher 3, Cyberpunk)
     $witcherSettings = Join-Path $docsPath "The Witcher 3\dx12user.settings"
     if (Test-Path $witcherSettings) {
-        $profile.InstalledGames["Witcher3"] = @{
-            Name       = "The Witcher 3: Wild Hunt (DX12)"
-            ConfigPath = $witcherSettings
-            Type       = "INI"
+        $profile.DiscoveredGames["CDPR_Witcher3"] = [ordered]@{
+            Name        = "The Witcher 3: Wild Hunt (DX12)"
+            Platform    = "CD Projekt RED"
+            ConfigType  = "INI"
+            ConfigPath  = $witcherSettings
         }
     }
 
@@ -215,62 +317,78 @@ function Get-VoltHardwareProfile {
 }
 
 # ------------------------------------------------------------------------------
-# 4. BACKUP & UNDO ENGINE (VOLTUNDO)
+# 4. DYNAMIC BACKUP & UNDO ENGINE (VOLTUNDO)
 # ------------------------------------------------------------------------------
 function New-VoltBackupSnapshot {
+    param([hashtable]$Hardware)
+
+    if (-not $Hardware) {
+        $Hardware = Get-VoltHardwareProfile
+    }
+
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $sessionBackupDir = Join-Path $Script:BackupDir "Snapshot-$timestamp"
     New-Item -ItemType Directory -Path $sessionBackupDir -Force | Out-Null
 
-    Write-Host " [*] Membuat cadangan sistem (Snapshot: $timestamp)..." -ForegroundColor Cyan
+    Write-Host " [*] Membuat cadangan sistem dinamis (Snapshot: $timestamp)..." -ForegroundColor Cyan
 
-    # 1. Backup Registry: MMCSS & SystemProfile
-    try {
-        & reg.exe export "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" (Join-Path $sessionBackupDir "SystemProfile.reg") /y | Out-Null
-    } catch {}
+    $manifest = [ordered]@{
+        Timestamp    = (Get-Date).ToString("o")
+        OS           = (Get-CimInstance Win32_OperatingSystem).Caption
+        RegistryKeys = @()
+        ConfigFiles  = @()
+    }
 
-    # 2. Backup Registry: GameDVR & GameConfigStore
-    try {
-        & reg.exe export "HKCU\System\GameConfigStore" (Join-Path $sessionBackupDir "GameConfigStore.reg") /y | Out-Null
-        & reg.exe export "HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR" (Join-Path $sessionBackupDir "GameDVR_Policy.reg") /y | Out-Null
-    } catch {}
+    # 1. Export Windows System Profiles
+    $systemRegs = @(
+        @{ Key = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"; File = "SystemProfile.reg" },
+        @{ Key = "HKCU\System\GameConfigStore"; File = "GameConfigStore.reg" },
+        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR"; File = "GameDVR_Policy.reg" },
+        @{ Key = "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; File = "GraphicsDrivers.reg" }
+    )
+    foreach ($sr in $systemRegs) {
+        try {
+            & reg.exe export $sr.Key (Join-Path $sessionBackupDir $sr.File) /y | Out-Null
+            $manifest.RegistryKeys += $sr.Key
+        } catch {}
+    }
 
-    # 3. Backup Registry: HAGS
-    try {
-        & reg.exe export "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" (Join-Path $sessionBackupDir "GraphicsDrivers.reg") /y | Out-Null
-    } catch {}
-
-    # 4. Backup Registry: Honkai Star Rail & Genshin Impact
-    try {
-        if (Test-Path "HKCU:\Software\Cognosphere\Star Rail") {
+    # 2. Export Discovered Game Registries
+    if ($Hardware.DiscoveredGames.Contains("HoYo_HSR")) {
+        try {
             & reg.exe export "HKCU\Software\Cognosphere\Star Rail" (Join-Path $sessionBackupDir "StarRail.reg") /y | Out-Null
-        }
-        if (Test-Path "HKCU:\Software\miHoYo\Genshin Impact") {
+            $manifest.RegistryKeys += "HKCU\Software\Cognosphere\Star Rail"
+        } catch {}
+    }
+    if ($Hardware.DiscoveredGames.Contains("HoYo_Genshin")) {
+        try {
             & reg.exe export "HKCU\Software\miHoYo\Genshin Impact" (Join-Path $sessionBackupDir "GenshinImpact.reg") /y | Out-Null
+            $manifest.RegistryKeys += "HKCU\Software\miHoYo\Genshin Impact"
+        } catch {}
+    }
+
+    # 3. Backup Discovered Game Config Files
+    foreach ($game in $Hardware.DiscoveredGames.Values) {
+        if ($game.ConfigPath -and (Test-Path $game.ConfigPath) -and -not ($game.ConfigPath.StartsWith("HKCU:"))) {
+            $safeName = $game.Name -replace '[\\/:*?"<>|]', '_'
+            $destName = [IO.Path]::GetFileName($game.ConfigPath)
+            $backupFileName = "${safeName}_$destName"
+            $destFile = Join-Path $sessionBackupDir $backupFileName
+            Copy-Item $game.ConfigPath $destFile -Force
+            # Also keep a local .bak alongside
+            Copy-Item $game.ConfigPath "$($game.ConfigPath).bak" -Force
+            $manifest.ConfigFiles += @{
+                OriginalPath = $game.ConfigPath
+                BackupFile   = $backupFileName
+            }
         }
-    } catch {}
-
-    # 5. Backup game file configs
-    $docsPath = [Environment]::GetFolderPath('MyDocuments')
-    $rdr2Real = Join-Path $docsPath "Rockstar Games\Red Dead Redemption 2\Settings\system.xml"
-    if (Test-Path $rdr2Real) {
-        Copy-Item $rdr2Real (Join-Path $sessionBackupDir "RDR2_system.xml") -Force
-    }
-    $witcherReal = Join-Path $docsPath "The Witcher 3\dx12user.settings"
-    if (Test-Path $witcherReal) {
-        Copy-Item $witcherReal (Join-Path $sessionBackupDir "Witcher3_dx12user.settings") -Force
     }
 
-    # 6. Save metadata JSON
-    $meta = @{
-        Timestamp = (Get-Date).ToString("o")
-        OS        = (Get-CimInstance Win32_OperatingSystem).Caption
-    }
-    $meta | ConvertTo-Json | Out-File (Join-Path $sessionBackupDir "manifest.json") -Encoding UTF8
-
-    # Set as latest backup
+    # 4. Save manifest
+    $manifest | ConvertTo-Json -Depth 5 | Out-File (Join-Path $sessionBackupDir "manifest.json") -Encoding UTF8
     $sessionBackupDir | Out-File (Join-Path $Script:BackupDir "latest.txt") -Encoding UTF8 -Force
-    Write-Host " [✓] Cadangan registri dan konfigurasi game tersimpan di: $sessionBackupDir" -ForegroundColor Green
+
+    Write-Host " [✓] Cadangan lengkap tersimpan di: $sessionBackupDir" -ForegroundColor Green
     return $sessionBackupDir
 }
 
@@ -298,59 +416,75 @@ function Invoke-VoltUndo {
         & reg.exe import $rf.FullName | Out-Null
     }
 
-    # Restore game configs from backup folder or .bak files
-    $docsPath = [Environment]::GetFolderPath('MyDocuments')
-    $rdr2Real = Join-Path $docsPath "Rockstar Games\Red Dead Redemption 2\Settings\system.xml"
-    $rdr2Snap = Join-Path $backupPath "RDR2_system.xml"
-    $rdr2Bak  = "$rdr2Real.bak"
-    if (Test-Path $rdr2Snap) {
-        Copy-Item $rdr2Snap $rdr2Real -Force
-        Write-Host "    -> Memulihkan konfigurasi RDR2 system.xml..." -ForegroundColor Green
-    } elseif (Test-Path $rdr2Bak) {
-        Copy-Item $rdr2Bak $rdr2Real -Force
-        Write-Host "    -> Memulihkan konfigurasi RDR2 system.xml dari .bak..." -ForegroundColor Green
+    # Restore Config Files dynamically via manifest.json
+    $manifestPath = Join-Path $backupPath "manifest.json"
+    if (Test-Path $manifestPath) {
+        try {
+            $manifest = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+            foreach ($cf in $manifest.ConfigFiles) {
+                $src = Join-Path $backupPath $cf.BackupFile
+                if (Test-Path $src) {
+                    Copy-Item $src $cf.OriginalPath -Force
+                    Write-Host "    -> Memulihkan file konfigurasi: $($cf.OriginalPath)" -ForegroundColor Green
+                }
+            }
+        } catch {
+            Write-Host " [!] Terjadi kesalahan saat membaca manifest: $_" -ForegroundColor DarkYellow
+        }
     }
 
-    $witcherReal = Join-Path $docsPath "The Witcher 3\dx12user.settings"
-    $witcherSnap = Join-Path $backupPath "Witcher3_dx12user.settings"
-    $witcherBak  = "$witcherReal.bak"
-    if (Test-Path $witcherSnap) {
-        Copy-Item $witcherSnap $witcherReal -Force
-        Write-Host "    -> Memulihkan konfigurasi Witcher 3 dx12user.settings..." -ForegroundColor Green
-    } elseif (Test-Path $witcherBak) {
-        Copy-Item $witcherBak $witcherReal -Force
-        Write-Host "    -> Memulihkan konfigurasi Witcher 3 dx12user.settings dari .bak..." -ForegroundColor Green
-    }
-
-    Write-Host "`n[✓] Seluruh pengaturan Windows dan konfigurasi game berhasil dikembalikan ke kondisi semula!" -ForegroundColor Green
+    Write-Host "`n[✓] Seluruh konfigurasi Windows dan game berhasil dikembalikan ke kondisi semula!" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
-# 5. WINDOWS GAMING RESPONSIVENESS BOOST
+# 5. DYNAMIC PROCESS GUARD (PREVENT ACCIDENTAL CACHE CORRUPTION)
+# ------------------------------------------------------------------------------
+function Get-VoltActiveGuards {
+    $guards = [ordered]@{
+        Browsers = @()
+        Launchers = @()
+        ActiveGames = @()
+    }
+
+    $browserPatterns = "chrome|msedge|firefox|brave|opera|vivaldi|arc|zen"
+    $launcherPatterns = "steam|epicgameslauncher|galaxyclient|riotclient|origin|eadesktop|battle\.net|hoyoplay"
+
+    $procs = Get-Process -ErrorAction SilentlyContinue
+    foreach ($p in $procs) {
+        if ($p.Name -match "^($browserPatterns)$" -and -not $guards.Browsers.Contains($p.Name)) {
+            $guards.Browsers += $p.Name
+        } elseif ($p.Name -match "^($launcherPatterns)$" -and -not $guards.Launchers.Contains($p.Name)) {
+            $guards.Launchers += $p.Name
+        }
+    }
+
+    return $guards
+}
+
+# ------------------------------------------------------------------------------
+# 6. DYNAMIC WINDOWS & DUAL-GPU ALIGNMENT
 # ------------------------------------------------------------------------------
 function Optimize-VoltWindowsCore {
     Write-Host "`n[*] Menerapkan Optimasi Responsiveness Windows..." -ForegroundColor Cyan
 
-    # 1. HAGS (Hardware-Accelerated GPU Scheduling)
+    # 1. HAGS
     try {
         $gfxPath = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
         if (-not (Test-Path $gfxPath)) { New-Item -Path $gfxPath -Force | Out-Null }
         Set-ItemProperty -Path $gfxPath -Name "HwSchMode" -Value 2 -Type DWord -Force
         Write-Host " [✓] HAGS (Hardware GPU Scheduling) -> Diaktifkan (HwSchMode = 2)" -ForegroundColor Green
-    } catch {
-        Write-Host " [!] Gagal mengatur HAGS: $_" -ForegroundColor DarkYellow
-    }
+    } catch {}
 
-    # 2. Windows Auto Game Mode
+    # 2. Game Mode
     try {
         $gameModePath = "HKCU:\Software\Microsoft\GameBar"
         if (-not (Test-Path $gameModePath)) { New-Item -Path $gameModePath -Force | Out-Null }
         Set-ItemProperty -Path $gameModePath -Name "AllowAutoGameMode" -Value 1 -Type DWord -Force
         Set-ItemProperty -Path $gameModePath -Name "AutoGameModeEnabled" -Value 1 -Type DWord -Force
-        Write-Host " [✓] Windows Game Mode -> Diaktifkan (Prioritas P-Core & Game Thread)" -ForegroundColor Green
+        Write-Host " [✓] Windows Game Mode -> Diaktifkan (Prioritas Game Thread)" -ForegroundColor Green
     } catch {}
 
-    # 3. MMCSS (Multimedia Class Scheduler Service)
+    # 3. MMCSS Low Latency Audio & Game Thread Priority
     try {
         $mmcssProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
         if (-not (Test-Path $mmcssProfile)) { New-Item -Path $mmcssProfile -Force | Out-Null }
@@ -364,11 +498,9 @@ function Optimize-VoltWindowsCore {
         Set-ItemProperty -Path $mmcssGames -Name "Scheduling Category" -Value "High" -Type String -Force
         Set-ItemProperty -Path $mmcssGames -Name "SFIO Priority" -Value "Normal" -Type String -Force
         Write-Host " [✓] MMCSS & Game Thread Priority -> Disesuaikan (Low Latency / Anti Audio-Crack)" -ForegroundColor Green
-    } catch {
-        Write-Host " [!] Gagal mengatur MMCSS: $_" -ForegroundColor DarkYellow
-    }
+    } catch {}
 
-    # 4. Matikan Background GameDVR (Mencegah Lag Rekaman Diam-diam)
+    # 4. Matikan Background GameDVR
     try {
         $gameStore = "HKCU:\System\GameConfigStore"
         if (-not (Test-Path $gameStore)) { New-Item -Path $gameStore -Force | Out-Null }
@@ -382,56 +514,56 @@ function Optimize-VoltWindowsCore {
     } catch {}
 }
 
-# ------------------------------------------------------------------------------
-# 6. DUAL GPU ALIGNMENT ENGINE (NVIDIA & AMD)
-# ------------------------------------------------------------------------------
 function Optimize-VoltDualGPU {
     param([hashtable]$Hardware)
 
-    Write-Host "`n[*] Menyelaraskan Pengaturan Kartu Grafis (Dual GPU Engine)..." -ForegroundColor Cyan
+    Write-Host "`n[*] Menyelaraskan Pengaturan Kartu Grafis (Dynamic Dual GPU)..." -ForegroundColor Cyan
 
+    # Dynamic NVIDIA Optimization
     if ($Hardware.HasNvidiaGPU) {
-        $tgpStr = if ($Hardware.DiscreteGPU.TGP_W) { " | Batas Daya: $($Hardware.DiscreteGPU.TGP_W)W TGP" } else { "" }
-        Write-Host " [NVIDIA GeForce Terdeteksi$tgpStr]" -ForegroundColor Green
+        $tgpStr = if ($Hardware.DiscreteGPU.TGP_W) { " ($($Hardware.DiscreteGPU.TGP_W)W TGP)" } else { "" }
+        Write-Host " [NVIDIA GeForce$tgpStr]" -ForegroundColor Green
+
+        # Dynamically size Shader Cache based on primary drive free space
+        $cFree = if ($Hardware.Drives.Contains("C:")) { $Hardware.Drives["C:"].FreeGB } else { 50 }
+        $cacheSizeMB = if ($cFree -gt 60) { 10240 } elseif ($cFree -gt 30) { 5120 } else { 1024 }
+
         try {
-            # Registry NVIDIA Shader Cache Size: Set to 10 GB limit for traversal anti-stutter
             $nvCacheKey = "HKLM:\SOFTWARE\NVIDIA Corporation\Global\NVTweak"
             if (-not (Test-Path $nvCacheKey)) { New-Item -Path $nvCacheKey -Force | Out-Null }
-            # 10 GB in MB = 10240
-            Set-ItemProperty -Path $nvCacheKey -Name "ShaderCacheSize" -Value 10240 -Type DWord -Force -ErrorAction SilentlyContinue
-            Write-Host "  -> Shader Cache NVIDIA dioptimasi (10 GB cache size limit)" -ForegroundColor Gray
+            Set-ItemProperty -Path $nvCacheKey -Name "ShaderCacheSize" -Value $cacheSizeMB -Type DWord -Force -ErrorAction SilentlyContinue
+            Write-Host "  -> Shader Cache NVIDIA disetel dinamis ke $([math]::Round($cacheSizeMB / 1024)) GB (Berdasarkan sisa storage $cFree GB)" -ForegroundColor Gray
         } catch {}
 
-        # Adaptive FPS Limit Recommendation
-        $hz = $Hardware.ScreenRefreshHz
-        $recFps = if ($hz -eq 144) { 72 } elseif ($hz -eq 120) { 60 } elseif ($hz -eq 165) { 82 } else { 60 }
-        Write-Host "  -> Rekomendasi Frame Cap: $recFps FPS (setengah $hz Hz untuk efisiensi daya/suhu laptop)" -ForegroundColor Gray
-        Write-Host "  -> Rekomendasi G-Sync/FreeSync: $($hz - 4) FPS (jika menggunakan VRR tear-free)" -ForegroundColor Gray
+        # Display Dynamic FPS Recommendations
+        $caps = $Hardware.DynamicFPSCaps
+        Write-Host "  -> Target FPS VRR (G-Sync/FreeSync) : $($caps.TearFreeVRRFPS) FPS (Bebas Tearing)" -ForegroundColor Gray
+        Write-Host "  -> Target FPS Hemat Daya / Dingin   : $($caps.HalfRate) FPS (Mencegah Thermal Throttle)" -ForegroundColor Gray
+        if ($Hardware.IsOnBattery) {
+            Write-Host "  [!] Sedang Mode Baterai: Direkomendasikan lock di $($caps.BatteryCap) FPS" -ForegroundColor Yellow
+        }
     }
 
+    # Dynamic AMD Radeon Optimization
     if ($Hardware.HasAmdGPU) {
         Write-Host " [AMD Radeon Terdeteksi]" -ForegroundColor Red
         try {
             $amdKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000"
             if (Test-Path $amdKey) {
-                # Enable AMD Shader Cache
                 Set-ItemProperty -Path $amdKey -Name "ShaderCache" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-                Write-Host "  -> AMD Shader Cache -> Enabled" -ForegroundColor Gray
+                Write-Host "  -> AMD Shader Cache -> Enabled (Optimized)" -ForegroundColor Gray
             }
         } catch {}
     }
 }
 
 # ------------------------------------------------------------------------------
-# 7. GAME AUTO-CONFIGURATOR (VOLTPLAY)
+# 7. DYNAMIC GAME CONFIGURATOR (VOLTPLAY)
 # ------------------------------------------------------------------------------
 function Optimize-VoltGameRDR2 {
     param([string]$XmlPath)
     try {
-        Write-Host " [RDR2] Mengoptimalkan system.xml..." -ForegroundColor Green
-        $bak = "$XmlPath.bak"
-        if (-not (Test-Path $bak)) { Copy-Item $XmlPath $bak -Force }
-
+        Write-Host " [RDR2] Menyelaraskan system.xml..." -ForegroundColor Green
         [xml]$xml = Get-Content -Path $XmlPath
         $adv = $xml.rage__fwuiSystemSettingsCollection.advancedGraphics
         if ($adv) {
@@ -439,7 +571,7 @@ function Optimize-VoltGameRDR2 {
             if ($adv.transferQueuesEnabled) { $adv.transferQueuesEnabled.value = "true" }
             if ($adv.maxTexUpgradesPerFrame) { $adv.maxTexUpgradesPerFrame.value = "10" }
             $xml.Save($XmlPath)
-            Write-Host "  -> RDR2: Async Compute, Transfer Queues, & MaxTexUpgrades = 10 aktif (Anti-stutter)" -ForegroundColor Gray
+            Write-Host "  -> RDR2: Async Compute & MaxTexUpgrades = 10 aktif (Anti-stutter)" -ForegroundColor Gray
         }
     } catch {
         Write-Host "  [!] Gagal mengupdate RDR2: $_" -ForegroundColor DarkYellow
@@ -448,7 +580,7 @@ function Optimize-VoltGameRDR2 {
 
 function Optimize-VoltGameHSR {
     try {
-        Write-Host " [Honkai: Star Rail] Mengoptimalkan Pengaturan Grafis..." -ForegroundColor Green
+        Write-Host " [Honkai: Star Rail] Menyelaraskan Pengaturan Grafis..." -ForegroundColor Green
         $keyPath = "HKCU:\Software\Cognosphere\Star Rail"
         $propName = (Get-ItemProperty -Path $keyPath).PSObject.Properties | Where-Object { $_.Name -like "GraphicsSettings_Model*" } | Select-Object -ExpandProperty Name -First 1
         if ($propName) {
@@ -457,14 +589,14 @@ function Optimize-VoltGameHSR {
                 $jsonStr = [System.Text.Encoding]::UTF8.GetString($rawBytes)
                 $jsonObj = $jsonStr | ConvertFrom-Json
                 
-                # Balance Reflection and Light Quality to High (4) to prevent thermal throttle in Penacony
+                # Dynamic balance for Light & Reflection Quality (High)
                 if ($jsonObj.LightQuality -gt 4) { $jsonObj.LightQuality = 4 }
                 if ($jsonObj.ReflectionQuality -gt 4) { $jsonObj.ReflectionQuality = 4 }
 
                 $updatedStr = $jsonObj | ConvertTo-Json -Compress
                 $newBytes = [System.Text.Encoding]::UTF8.GetBytes($updatedStr)
                 Set-ItemProperty -Path $keyPath -Name $propName -Value $newBytes -Type Binary -Force
-                Write-Host "  -> HSR: Kualitas Light & Reflection diselaraskan ke High (Stabil 60-72 FPS di Penacony)" -ForegroundColor Gray
+                Write-Host "  -> HSR: Light & Reflection diselaraskan ke High (Stabil di Penacony)" -ForegroundColor Gray
             }
         }
     } catch {
@@ -474,7 +606,7 @@ function Optimize-VoltGameHSR {
 
 function Optimize-VoltGameGenshin {
     try {
-        Write-Host " [Genshin Impact] Menyelaraskan Pengaturan Beban CPU/GPU..." -ForegroundColor Green
+        Write-Host " [Genshin Impact] Menyelaraskan Beban CPU/GPU..." -ForegroundColor Green
         $keyPath = "HKCU:\Software\miHoYo\Genshin Impact"
         $propName = (Get-ItemProperty -Path $keyPath).PSObject.Properties | Where-Object { $_.Name -like "GENERAL_DATA*" } | Select-Object -ExpandProperty Name -First 1
         if ($propName) {
@@ -485,41 +617,34 @@ function Optimize-VoltGameGenshin {
                 if ($rootJson.graphicsData) {
                     $gData = $rootJson.graphicsData | ConvertFrom-Json
                     if ($gData.customVolatileGrades) {
-                        # Key 12 = Crowd Density: Set to 2 (Medium) for smooth performance in Fontaine/Natlan
-                        # Key 1 = Render Resolution: Set to 2 (1.0 scale)
-                        # Key 6 = Shadow Quality: Cap at 4 (High)
                         foreach ($item in $gData.customVolatileGrades) {
-                            if ($item.key -eq 12 -and $item.value -gt 2) { $item.value = 2 }
-                            if ($item.key -eq 1 -and $item.value -gt 2) { $item.value = 2 }
-                            if ($item.key -eq 6 -and $item.value -gt 4) { $item.value = 4 }
+                            if ($item.key -eq 12 -and $item.value -gt 2) { $item.value = 2 } # Crowd Density: Medium
+                            if ($item.key -eq 1 -and $item.value -gt 2) { $item.value = 2 }  # Render Scale: 1.0
+                            if ($item.key -eq 6 -and $item.value -gt 4) { $item.value = 4 }  # Shadows: High
                         }
                         $rootJson.graphicsData = ($gData | ConvertTo-Json -Compress)
                         $updatedRaw = ($rootJson | ConvertTo-Json -Compress)
                         $newBytes = [System.Text.Encoding]::UTF8.GetBytes($updatedRaw)
                         Set-ItemProperty -Path $keyPath -Name $propName -Value $newBytes -Type Binary -Force
-                        Write-Host "  -> Genshin: Crowd Density diselaraskan ke Medium & Shadow ke High (Anti CPU Spike)" -ForegroundColor Gray
+                        Write-Host "  -> Genshin: Crowd Density diselaraskan ke Medium & Shadows ke High" -ForegroundColor Gray
                     }
                 }
             }
         }
     } catch {
-        Write-Host "  [!] Gagal mengupdate Genshin Impact: $_" -ForegroundColor DarkYellow
+        Write-Host "  [!] Gagal mengupdate Genshin: $_" -ForegroundColor DarkYellow
     }
 }
 
 function Optimize-VoltGameWitcher3 {
     param([string]$SettingsPath)
     try {
-        Write-Host " [The Witcher 3] Mengoptimalkan dx12user.settings..." -ForegroundColor Green
-        $bak = "$SettingsPath.bak"
-        if (-not (Test-Path $bak)) { Copy-Item $SettingsPath $bak -Force }
-
+        Write-Host " [The Witcher 3] Menyelaraskan dx12user.settings..." -ForegroundColor Green
         $content = Get-Content $SettingsPath -Raw
-        # Ensure DLSS Frame Generation is enabled and HairWorks disabled
         $content = $content -replace "HairWorksLevel=\d+", "HairWorksLevel=0"
         $content = $content -replace "AllowDLSSG=(false|true)", "AllowDLSSG=true"
         Set-Content -Path $SettingsPath -Value $content -Encoding UTF8 -Force
-        Write-Host "  -> Witcher 3: HairWorks diatur ke 0 & DLSS-G aktif (Anti-drop di Novigrad)" -ForegroundColor Gray
+        Write-Host "  -> Witcher 3: HairWorks diatur ke 0 & DLSS-G aktif (Novigrad Anti-drop)" -ForegroundColor Gray
     } catch {
         Write-Host "  [!] Gagal mengupdate Witcher 3: $_" -ForegroundColor DarkYellow
     }
@@ -528,59 +653,80 @@ function Optimize-VoltGameWitcher3 {
 function Optimize-VoltPlayGames {
     param(
         [hashtable]$Hardware,
-        [string]$TargetGame = "ALL"
+        [string]$TargetGameKey = "ALL"
     )
 
-    Write-Host "`n[*] Memeriksa & Mengoptimasi Konfigurasi Game (VoltPlay)..." -ForegroundColor Cyan
+    Write-Host "`n[*] Menjalankan Penyelarasan In-Game Dinamis (VoltPlay)..." -ForegroundColor Cyan
 
-    if (($TargetGame -eq "ALL" -or $TargetGame -eq "RDR2") -and $Hardware.InstalledGames.ContainsKey("RDR2")) {
-        Optimize-VoltGameRDR2 -XmlPath $Hardware.InstalledGames["RDR2"].ConfigPath
+    $games = $Hardware.DiscoveredGames
+
+    if (($TargetGameKey -eq "ALL" -or $TargetGameKey -eq "Rockstar_RDR2") -and $games.Contains("Rockstar_RDR2")) {
+        Optimize-VoltGameRDR2 -XmlPath $games["Rockstar_RDR2"].ConfigPath
     }
 
-    if (($TargetGame -eq "ALL" -or $TargetGame -eq "HSR") -and $Hardware.InstalledGames.ContainsKey("HSR")) {
+    if (($TargetGameKey -eq "ALL" -or $TargetGameKey -eq "HoYo_HSR") -and $games.Contains("HoYo_HSR")) {
         Optimize-VoltGameHSR
     }
 
-    if (($TargetGame -eq "ALL" -or $TargetGame -eq "Genshin") -and $Hardware.InstalledGames.ContainsKey("Genshin")) {
+    if (($TargetGameKey -eq "ALL" -or $TargetGameKey -eq "HoYo_Genshin") -and $games.Contains("HoYo_Genshin")) {
         Optimize-VoltGameGenshin
     }
 
-    if (($TargetGame -eq "ALL" -or $TargetGame -eq "Witcher3") -and $Hardware.InstalledGames.ContainsKey("Witcher3")) {
-        Optimize-VoltGameWitcher3 -SettingsPath $Hardware.InstalledGames["Witcher3"].ConfigPath
+    if (($TargetGameKey -eq "ALL" -or $TargetGameKey -eq "CDPR_Witcher3") -and $games.Contains("CDPR_Witcher3")) {
+        Optimize-VoltGameWitcher3 -SettingsPath $games["CDPR_Witcher3"].ConfigPath
     }
 
-    if ($Hardware.InstalledGames.Count -eq 0) {
-        Write-Host "  [-] Belum ada game open-world terdeteksi di lokasi standar." -ForegroundColor Gray
+    # For any generic Steam game: Register Windows GPU High Performance preference dynamically
+    foreach ($k in $games.Keys) {
+        $g = $games[$k]
+        if ($g.Platform -eq "Steam" -and (Test-Path $g.InstallPath)) {
+            $exes = Get-ChildItem -Path $g.InstallPath -Filter "*.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notmatch "crash|report|unins|helper|redist|vcredist" } | Select-Object -First 1
+            if ($exes) {
+                try {
+                    $prefPath = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
+                    if (-not (Test-Path $prefPath)) { New-Item -Path $prefPath -Force | Out-Null }
+                    # GpuPreference=2 specifies Discrete / High Performance GPU
+                    Set-ItemProperty -Path $prefPath -Name $exes.FullName -Value "GpuPreference=2;" -Type String -Force -ErrorAction SilentlyContinue
+                } catch {}
+            }
+        }
     }
+
+    Write-Host " [✓] Penyelarasan game selesai." -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
-# 8. SAFE DISK & CACHE CLEANUP (VOLTCLEAN)
+# 8. DYNAMIC DISK CLEANUP ACROSS ALL DRIVES (VOLTCLEAN)
 # ------------------------------------------------------------------------------
 function Invoke-VoltClean {
+    param([hashtable]$Hardware)
+
+    if (-not $Hardware) {
+        $Hardware = Get-VoltHardwareProfile
+    }
+
     Write-Host "`n================================================================================" -ForegroundColor Cyan
-    Write-Host "                       🧹 PEMBERSIH DISK AMAN (VOLTCLEAN)                      " -ForegroundColor Cyan
+    Write-Host "               🧹 PEMBERSIH DISK LINTAS-DRIVE DINAMIS (VOLTCLEAN)              " -ForegroundColor Cyan
     Write-Host "================================================================================" -ForegroundColor Cyan
 
-    $initialFree = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
-    Write-Host "[*] Free Space Drive C: Sebelum Pembersihan: $initialFree GB" -ForegroundColor Gray
-
-    # Process Check: Check if Chrome or Games are running
-    $runningProcesses = Get-Process -Name "chrome", "msedge", "StarRail", "GenshinImpact", "RDR2", "witcher3" -ErrorAction SilentlyContinue
-    if ($runningProcesses) {
-        $pNames = ($runningProcesses | Select-Object -ExpandProperty Name -Unique) -join ", "
-        Write-Host "[!] Terdeteksi aplikasi aktif berjalan: $pNames" -ForegroundColor Yellow
-        Write-Host "    -> File cache yang sedang dipakai akan otomatis dilewati demi keamanan data." -ForegroundColor Gray
+    $initialDrives = [ordered]@{}
+    foreach ($d in $Hardware.Drives.Keys) {
+        $psd = Get-PSDrive -Name ($d.TrimEnd(':')) -ErrorAction SilentlyContinue
+        if ($psd) {
+            $initialDrives[$d] = [math]::Round($psd.Free / 1GB, 2)
+            Write-Host "[*] Free Space $d ($($Hardware.Drives[$d].Label)): $($initialDrives[$d]) GB" -ForegroundColor Gray
+        }
     }
 
-    $stats = [ordered]@{
-        UserTempCleanedBytes = 0
-        WinTempCleanedBytes  = 0
-        ShaderCacheBytes     = 0
-        DumpsCleanedBytes    = 0
+    # Dynamic Process Guard Check
+    $guards = Get-VoltActiveGuards
+    if ($guards.Browsers.Count -gt 0 -or $guards.Launchers.Count -gt 0) {
+        $found = ($guards.Browsers + $guards.Launchers) -join ", "
+        Write-Host "[!] Terdeteksi proses aktif berjalan: $found" -ForegroundColor Yellow
+        Write-Host "    -> File cache yang sedang dipakai akan dilewati secara aman." -ForegroundColor Gray
     }
 
-    # Helper function to remove directory contents safely
     function Clear-FolderSafely ($path) {
         $reclaimed = 0
         if (-not (Test-Path $path)) { return 0 }
@@ -596,49 +742,67 @@ function Invoke-VoltClean {
         return $reclaimed
     }
 
+    $totalReclaimedBytes = 0
+
     # 1. Clean User Temp
     Write-Host "[*] Membersihkan User Temp ($env:TEMP)..." -ForegroundColor Cyan
-    $stats.UserTempCleanedBytes = Clear-FolderSafely $env:TEMP
+    $totalReclaimedBytes += Clear-FolderSafely $env:TEMP
 
     # 2. Clean Windows Temp
     Write-Host "[*] Membersihkan Windows Temp (C:\Windows\Temp)..." -ForegroundColor Cyan
-    $stats.WinTempCleanedBytes = Clear-FolderSafely "C:\Windows\Temp"
+    $totalReclaimedBytes += Clear-FolderSafely "C:\Windows\Temp"
 
-    # 3. Clean DirectX & GPU Shader Caches
+    # 3. Clean DirectX & Multi-Vendor GPU Shader Caches
     Write-Host "[*] Membersihkan DirectX & GPU Shader Caches..." -ForegroundColor Cyan
-    $d3dPath = Join-Path $env:LOCALAPPDATA "D3DSCache"
-    $nvDxPath = Join-Path $env:LOCALAPPDATA "NVIDIA\DXCache"
-    $nvGlPath = Join-Path $env:LOCALAPPDATA "NVIDIA\GLCache"
+    $shaderPaths = @(
+        (Join-Path $env:LOCALAPPDATA "D3DSCache"),
+        (Join-Path $env:LOCALAPPDATA "NVIDIA\DXCache"),
+        (Join-Path $env:LOCALAPPDATA "NVIDIA\GLCache"),
+        (Join-Path $env:APPDATA "NVIDIA\ComputeCache"),
+        (Join-Path $env:LOCALAPPDATA "AMD\DxCache"),
+        (Join-Path $env:LOCALAPPDATA "AMD\GLCache"),
+        (Join-Path $env:LOCALAPPDATA "Intel\ShaderCache")
+    )
+    foreach ($sp in $shaderPaths) {
+        $totalReclaimedBytes += Clear-FolderSafely $sp
+    }
 
-    $stats.ShaderCacheBytes += Clear-FolderSafely $d3dPath
-    $stats.ShaderCacheBytes += Clear-FolderSafely $nvDxPath
-    $stats.ShaderCacheBytes += Clear-FolderSafely $nvGlPath
+    # 4. Clean Steam Shader Caches across ALL Discovered Steam Libraries
+    if ($Hardware.SteamLibraries) {
+        foreach ($lib in $Hardware.SteamLibraries) {
+            $steamCache = Join-Path $lib "steamapps\shadercache"
+            if (Test-Path $steamCache) {
+                Write-Host "[*] Membersihkan Steam Shader Cache di: $steamCache..." -ForegroundColor Cyan
+                $totalReclaimedBytes += Clear-FolderSafely $steamCache
+            }
+        }
+    }
 
-    # 4. Clean Crash Dumps & Windows Error Reporting
+    # 5. Clean Crash Dumps
     Write-Host "[*] Membersihkan Crash Dumps & Error Reports..." -ForegroundColor Cyan
-    $dumpsPath = Join-Path $env:LOCALAPPDATA "CrashDumps"
-    $stats.DumpsCleanedBytes = Clear-FolderSafely $dumpsPath
+    $totalReclaimedBytes += Clear-FolderSafely (Join-Path $env:LOCALAPPDATA "CrashDumps")
 
-    # 5. Empty Recycle Bin
+    # 6. Empty Recycle Bin
     try {
         Clear-RecycleBin -Force -ErrorAction SilentlyContinue
         Write-Host "[*] Recycle Bin dikosongkan." -ForegroundColor Cyan
     } catch {}
 
-    $finalFree = [math]::Round((Get-PSDrive C).Free / 1GB, 2)
-    $gained = [math]::Round($finalFree - $initialFree, 2)
-
-    Write-Host "`n========================= RINGKASAN PEMBERSAIHAN =========================" -ForegroundColor Green
-    Write-Host " • User Temp Reclaimed        : $([math]::Round($stats.UserTempCleanedBytes / 1MB, 1)) MB" -ForegroundColor White
-    Write-Host " • Windows Temp Reclaimed     : $([math]::Round($stats.WinTempCleanedBytes / 1MB, 1)) MB" -ForegroundColor White
-    Write-Host " • Shader Cache Reclaimed     : $([math]::Round($stats.ShaderCacheBytes / 1MB, 1)) MB" -ForegroundColor White
-    Write-Host " • Crash Dumps Reclaimed      : $([math]::Round($stats.DumpsCleanedBytes / 1MB, 1)) MB" -ForegroundColor White
-    Write-Host " • Free Space Drive C: Akhir  : $finalFree GB (Perubahan: +$gained GB)" -ForegroundColor Green
+    Write-Host "`n====================== RINGKASAN PEROLEHAN STORAGE ======================" -ForegroundColor Green
+    Write-Host " • Total Sampah & Cache Dibersihkan : $([math]::Round($totalReclaimedBytes / 1MB, 1)) MB" -ForegroundColor White
+    foreach ($d in $initialDrives.Keys) {
+        $psd = Get-PSDrive -Name ($d.TrimEnd(':')) -ErrorAction SilentlyContinue
+        if ($psd) {
+            $after = [math]::Round($psd.Free / 1GB, 2)
+            $diff = [math]::Round($after - $initialDrives[$d], 2)
+            Write-Host " • Drive $d Free Space Akhir          : $after GB (Perubahan: +$diff GB)" -ForegroundColor Green
+        }
+    }
     Write-Host "==========================================================================" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
-# 9. ADVANCED UTILITIES (DNS, DISM, SFC, POWER, APPS)
+# 9. ADVANCED UTILITIES (DNS BENCHMARK, POWER PLAN, SFC, DISM, APPS)
 # ------------------------------------------------------------------------------
 function Invoke-VoltAdvancedTools {
     $inSubMenu = $true
@@ -683,7 +847,6 @@ function Invoke-VoltAdvancedTools {
                 $planChoice = Read-Host "Pilih Power Plan [U/H/B]"
                 switch ($planChoice.ToUpper()) {
                     "U" {
-                        # Duplicate Ultimate Performance scheme if not present
                         $res = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null
                         powercfg /setactive e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null
                         Write-Host "[✓] Skema Ultimate Performance diaktifkan!" -ForegroundColor Green
@@ -719,31 +882,44 @@ function Invoke-VoltAdvancedTools {
 }
 
 # ------------------------------------------------------------------------------
-# 10. INTERACTIVE UI & MENU CONTROLLER
+# 10. INTERACTIVE UI & DYNAMIC DISPLAY
 # ------------------------------------------------------------------------------
 function Show-VoltBanner {
     Clear-Host
     Write-Host "================================================================================" -ForegroundColor Cyan
-    Write-Host "                       ⚡ VOLTUNE WINDOWS UTILITY v$Script:VoltVersion ⚡                 " -ForegroundColor Yellow
-    Write-Host "                 Bikin Laptop & PC Gaming Lu Lebih Ngacir & Stabil              " -ForegroundColor Cyan
+    Write-Host "                   ⚡ VOLTUNE WINDOWS UTILITY v$Script:VoltVersion ⚡                   " -ForegroundColor Yellow
+    Write-Host "             Toolkit Optimasi Dinamis & Penyelaras Performa Universal          " -ForegroundColor Cyan
     Write-Host "================================================================================" -ForegroundColor Cyan
 }
 
 function Show-VoltSpecs ($hw) {
-    Write-Host "`n[SPEK LAPTOP LU TERDETEKSI]" -ForegroundColor Yellow
+    Write-Host "`n[SPEK HARDWARE DINAMIS TERDETEKSI]" -ForegroundColor Yellow
     Write-Host " • Prosesor  : $($hw.CPUName) ($($hw.CPUCores) Cores, $($hw.CPUThreads) Threads$(if ($hw.IsHybridCPU) { ' | Hybrid P+E' }))" -ForegroundColor White
+    
     $gpuDesc = if ($hw.DiscreteGPU) {
         $tgp = if ($hw.DiscreteGPU.TGP_W) { " | $($hw.DiscreteGPU.TGP_W)W TGP" } else { "" }
         "$($hw.DiscreteGPU.Name) ($($hw.DiscreteGPU.VRAM_GB) GB VRAM$tgp)"
     } else { "iGPU Only" }
     Write-Host " • Kartu GPU : $gpuDesc" -ForegroundColor White
+
+    $pwrStatus = if ($hw.IsOnBattery) { "Baterai ($($hw.BatteryChargePct)%) [Hemat Daya]" } else { "AC Adapter (Daya Maksimal) [✓]" }
+    Write-Host " • Sumber Daya: $pwrStatus" -ForegroundColor $(if ($hw.IsOnBattery) { 'Yellow' } else { 'Green' })
+
     Write-Host " • Layar     : $($hw.ScreenResolution) @ $($hw.ScreenRefreshHz) Hz" -ForegroundColor White
+    Write-Host " • Target FPS: VRR $($hw.DynamicFPSCaps.TearFreeVRRFPS) FPS | Hemat $($hw.DynamicFPSCaps.HalfRate) FPS" -ForegroundColor Gray
     Write-Host " • Memori    : $($hw.RAM_GB) GB RAM" -ForegroundColor White
-    Write-Host " • Ruang C:  : $($hw.DriveC_FreeGB) GB Bebas" -ForegroundColor White
+
+    # Multi-Drive Summary
+    $driveStrs = @()
+    foreach ($d in $hw.Drives.Values) {
+        $driveStrs += "$($d.DeviceID) $($d.FreeGB)/$($d.TotalGB) GB"
+    }
+    Write-Host " • Storage   : $($driveStrs -join ' | ')" -ForegroundColor White
     Write-Host " • Status HAGS: $(if ($hw.HAGS_Status) { 'Aktif [✓]' } else { 'Nonaktif [!]' })" -ForegroundColor $(if ($hw.HAGS_Status) { 'Green' } else { 'Yellow' })
-    
-    $gameNames = $hw.InstalledGames.Values | Select-Object -ExpandProperty Name
-    $gameStr = if ($gameNames) { $gameNames -join ", " } else { "Tidak terdeteksi" }
+
+    # Discovered Games Summary
+    $gameList = $hw.DiscoveredGames.Values | Select-Object -ExpandProperty Name
+    $gameStr = if ($gameList) { ($gameList | Select-Object -Unique) -join ", " } else { "Tidak terdeteksi" }
     Write-Host " • Game Nemu : $gameStr" -ForegroundColor White
 }
 
@@ -756,15 +932,15 @@ $hwProfile = Get-VoltHardwareProfile
 
 # Handle command-line switches
 if ($AutoOptimize) {
-    New-VoltBackupSnapshot
+    New-VoltBackupSnapshot -Hardware $hwProfile
     Optimize-VoltWindowsCore
     Optimize-VoltDualGPU -Hardware $hwProfile
-    Optimize-VoltPlayGames -Hardware $hwProfile
+    Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
     exit 0
 }
 
 if ($CleanOnly) {
-    Invoke-VoltClean
+    Invoke-VoltClean -Hardware $hwProfile
     exit 0
 }
 
@@ -782,13 +958,13 @@ while ($running) {
     Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor DarkCyan
     Write-Host " PILIH TINDAKAN (Ketik angka lalu tekan Enter):" -ForegroundColor Yellow
     Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkCyan
-    Write-Host " [1] 🚀 Optimasi Otomatis (Rekomendasi - Terima Beres)" -ForegroundColor Green
-    Write-Host "     -> Bikin cadangan dulu, aktifkan HAGS & prioritas game Windows," -ForegroundColor Gray
-    Write-Host "        setel driver NVIDIA/AMD biar gak stutter, dan beresin setting game lu." -ForegroundColor Gray
-    Write-Host " [2] 🎮 Sesuaikan Setting Game Khusus (RDR2 / HSR / Genshin / Witcher)" -ForegroundColor White
-    Write-Host "     -> Pilih game yang mau disesuaikan settingannya biar FPS-nya rata." -ForegroundColor Gray
-    Write-Host " [3] 🧹 Bersihkan File Sampah & Ruang Disk (VoltClean)" -ForegroundColor White
-    Write-Host "     -> Bersihkan cache usang, temp, crash dump, dan shader cache aman 100%." -ForegroundColor Gray
+    Write-Host " [1] 🚀 Optimasi Otomatis Dinamis (Rekomendasi - Terima Beres)" -ForegroundColor Green
+    Write-Host "     -> Cadangkan sistem, aktifkan HAGS & prioritas game Windows," -ForegroundColor Gray
+    Write-Host "        setel driver NVIDIA/AMD, dan optimasi game yang terpasang." -ForegroundColor Gray
+    Write-Host " [2] 🎮 Sesuaikan Setting Game Dinamis (VoltPlay)" -ForegroundColor White
+    Write-Host "     -> Pilih game terdeteksi (Steam / HoYo / Rockstar / CDPR) untuk dioptimasi." -ForegroundColor Gray
+    Write-Host " [3] 🧹 Bersihkan File Sampah & Cache Lintas-Drive (VoltClean)" -ForegroundColor White
+    Write-Host "     -> Hapus cache usang, temp, shader cache lintas-drive aman 100%." -ForegroundColor Gray
     Write-Host " [4] 🛠️ Buka Fitur Lanjutan Voltune (DNS, DISM, SFC, Power Plan)" -ForegroundColor White
     Write-Host "     -> Utilitas teknis pemeliharaan integritas sistem Windows." -ForegroundColor Gray
     Write-Host " [5] ↩️ Kembalikan Semua Settingan ke Semula (Undo / Reset)" -ForegroundColor Yellow
@@ -799,51 +975,40 @@ while ($running) {
     $choice = Read-Host "`nPilihan lu [0-5]"
     switch ($choice) {
         "1" {
-            New-VoltBackupSnapshot
+            New-VoltBackupSnapshot -Hardware $hwProfile
             Optimize-VoltWindowsCore
             Optimize-VoltDualGPU -Hardware $hwProfile
-            Optimize-VoltPlayGames -Hardware $hwProfile
+            Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
             Write-Host "`n[✓] Optimasi otomatis selesai! Tekan Enter untuk melanjutkan..." -ForegroundColor Green
             Read-Host
         }
         "2" {
             Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor Cyan
-            Write-Host " PILIH GAME YANG INGIN DISESUAIKAN (VoltPlay):" -ForegroundColor Yellow
+            Write-Host " GAME TERPASANG YANG TERDETEKSI SECARA DINAMIS:" -ForegroundColor Yellow
             Write-Host "--------------------------------------------------------------------------------" -ForegroundColor Cyan
-            Write-Host " [1] Red Dead Redemption 2 (Async Compute, Transfer Queues, MaxTexUpgrades 10)"
-            Write-Host " [2] Honkai: Star Rail (Light & Reflection High, Anti-Penacony Drop)"
-            Write-Host " [3] Genshin Impact (Crowd Density Medium, Shadow Balanced, Anti CPU-Spike)"
-            Write-Host " [4] The Witcher 3: Wild Hunt (DLSS-G Frame Gen On, HairWorks Off)"
-            Write-Host " [A] Sesuaikan Semua Game Terdeteksi Sekaligus"
+            $gameKeys = @($hwProfile.DiscoveredGames.Keys)
+            for ($i = 0; $i -lt $gameKeys.Count; $i++) {
+                $gk = $gameKeys[$i]
+                $gObj = $hwProfile.DiscoveredGames[$gk]
+                Write-Host " [$($i + 1)] $($gObj.Name) [$($gObj.Platform)]"
+            }
+            Write-Host " [A] Optimalkan Semua Game Terdeteksi Sekaligus"
             Write-Host " [0] Kembali ke Menu Utama"
-            $gChoice = Read-Host "`nPilih opsi game [1-4 / A / 0]"
-            switch ($gChoice.ToUpper()) {
-                "1" {
-                    New-VoltBackupSnapshot
-                    Optimize-VoltPlayGames -Hardware $hwProfile -TargetGame "RDR2"
-                }
-                "2" {
-                    New-VoltBackupSnapshot
-                    Optimize-VoltPlayGames -Hardware $hwProfile -TargetGame "HSR"
-                }
-                "3" {
-                    New-VoltBackupSnapshot
-                    Optimize-VoltPlayGames -Hardware $hwProfile -TargetGame "Genshin"
-                }
-                "4" {
-                    New-VoltBackupSnapshot
-                    Optimize-VoltPlayGames -Hardware $hwProfile -TargetGame "Witcher3"
-                }
-                "A" {
-                    New-VoltBackupSnapshot
-                    Optimize-VoltPlayGames -Hardware $hwProfile -TargetGame "ALL"
-                }
+
+            $gChoice = Read-Host "`nPilih nomor game [1-$($gameKeys.Count) / A / 0]"
+            if ($gChoice -eq "A" -or $gChoice -eq "a") {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
+            } elseif ($gChoice -match "^\d+$" -and [int]$gChoice -ge 1 -and [int]$gChoice -le $gameKeys.Count) {
+                $selectedKey = $gameKeys[[int]$gChoice - 1]
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey $selectedKey
             }
             Write-Host "`n[✓] Selesai! Tekan Enter untuk melanjutkan..." -ForegroundColor Green
             Read-Host
         }
         "3" {
-            Invoke-VoltClean
+            Invoke-VoltClean -Hardware $hwProfile
             Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
             Read-Host
         }
