@@ -1,4 +1,4 @@
-$voltDir = Split-Path $PSScriptRoot -Parent
+﻿$voltDir = Split-Path $PSScriptRoot -Parent
 $scriptPath = Join-Path $voltDir "voltune.ps1"
 $content = Get-Content -Path $scriptPath -Raw
 

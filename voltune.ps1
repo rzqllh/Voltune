@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     VoltPlay & Voltune Windows Utility v3.0 - Ultimate Universal Hardware-Aware Performance, Gaming & System Toolkit
 .DESCRIPTION

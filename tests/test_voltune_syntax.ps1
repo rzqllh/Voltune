@@ -1,4 +1,4 @@
-# Test Voltune Dynamic Syntax & Detection
+﻿# Test Voltune Dynamic Syntax & Detection
 $voltuneDir = Split-Path $PSScriptRoot -Parent
 $scriptPath = Join-Path $voltuneDir "voltune.ps1"
 $content = Get-Content -Path $scriptPath -Raw
