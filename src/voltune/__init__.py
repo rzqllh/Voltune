@@ -1,3 +1,3 @@
-"""Voltune Windows system toolkit."""
+"""Voltune package."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.2"
