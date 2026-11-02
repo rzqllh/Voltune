@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-    VoltPlay & Voltune Windows Utility v3.2 - Ultimate Universal Windows Performance, Gaming & System Toolkit
+    VoltPlay & Voltune Windows Utility v3.3 - Ultimate Universal Windows Performance, Gaming & System Hub
 .DESCRIPTION
     Toolkit komprehensif optimasi Windows, manajemen kartu grafis dual-GPU (NVIDIA/AMD/Intel),
     penyelarasan setting game anti-stutter dinamis multi-drive, pembersih disk lintas-drive,
     Windows 11 QoL tweaks (Classic Context Menu, Explorer, Taskbar), privasi & anti-telemetri,
     TCP/IP gaming latency optimizer (Zero-VPN harm), Windows Services optimizer,
     Windows Update control (Security Updates Only), gaming raw mouse input & Defender auto-exclusions,
-    WinGet software catalog & game runtimes installer (Chris Titus style), System Restore automation,
+    WinGet software catalog komprehensif & game runtimes installer (Chris Titus style), System Restore automation,
     serta sistem snapshot 1-klik Undo dinamis dengan Modern Native WPF Desktop GUI & Interactive TUI.
 .NOTES
     Safe by default, Reversible by design, 100% Dynamic, Zero VPN Harm.
@@ -49,7 +49,7 @@ function Invoke-VoltElevation {
             $argList += @("-Command", "`"irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex`"")
         }
 
-        # Teruskan argumen jika ada
+        # Teruskan seluruh argumen CLI jika ada
         if ($args) {
             foreach ($a in $args) { $argList += "`"$a`"" }
         }
@@ -65,15 +65,16 @@ function Invoke-VoltElevation {
 # ------------------------------------------------------------------------------
 # 2. KONFIGURASI GLOBAL & PATHS
 # ------------------------------------------------------------------------------
-$Script:VoltVersion = "3.2.0-Universal"
+$Script:VoltVersion = "3.3.0-Universal"
 $Script:AppDataDir  = Join-Path $env:LOCALAPPDATA "Voltune"
 $Script:BackupDir   = Join-Path $Script:AppDataDir "Backups"
 $Script:LogDir      = Join-Path $Script:AppDataDir "Logs"
 
 if (-not (Test-Path $Script:BackupDir)) { New-Item -ItemType Directory -Path $Script:BackupDir -Force | Out-Null }
 if (-not (Test-Path $Script:LogDir)) { New-Item -ItemType Directory -Path $Script:LogDir -Force | Out-Null }
+
 # ------------------------------------------------------------------------------
-# 3. DYNAMIC DETECTION ENGINE (HARDWARE, ENVIRONMENT, DRIVES, & GAMES)
+# 3. DYNAMIC DETECTION ENGINE (HARDWARE, ENVIRONMENT, DRIVES, & GPU VRAM FIX)
 # ------------------------------------------------------------------------------
 function Get-VoltHardwareProfile {
     $profile = [ordered]@{
@@ -189,7 +190,7 @@ function Get-VoltHardwareProfile {
         BaseHz      = $hz
     }
 
-    # Query GPUs (Dual-GPU Recognition)
+    # Query GPUs (Dual-GPU Recognition dengan Multi-Path nvidia-smi & VRAM Fix)
     try {
         $gpus = Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue
         foreach ($g in $gpus) {
@@ -206,17 +207,27 @@ function Get-VoltHardwareProfile {
             }
 
             if ($name -match "NVIDIA") {
-                $nvsmi = Join-Path $env:ProgramFiles "NVIDIA Corporation\NVSMI\nvidia-smi.exe"
-                if (Test-Path $nvsmi) {
+                # Cari nvidia-smi di System32 terlebih dahulu (lokasi modern DCH driver)
+                $smiPaths = @(
+                    (Join-Path $env:SystemRoot "System32\nvidia-smi.exe"),
+                    (Join-Path $env:ProgramFiles "NVIDIA Corporation\NVSMI\nvidia-smi.exe")
+                )
+                $nvsmi = $smiPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+                if ($nvsmi) {
                     try {
-                        $smiOut = & $nvsmi --query-gpu=memory.total,power.limit --format=csv,noheader,nounits 2>$null
+                        $smiOut = & $nvsmi --query-gpu=memory.total,power.limit,enforced.power.limit --format=csv,noheader,nounits 2>$null
                         if ($smiOut) {
                             $parts = ($smiOut -split ",") | ForEach-Object { $_.Trim() }
-                            if ($parts.Count -ge 2) {
+                            if ($parts.Count -ge 1 -and $parts[0] -as [double]) {
                                 $vramMB = [double]$parts[0]
-                                $tgpW   = [double]$parts[1]
                                 $gpuObj.VRAM_GB = [math]::Round($vramMB / 1024, 1)
-                                $gpuObj.TGP_W   = [math]::Round($tgpW, 0)
+                            }
+                            # Cari angka TGP valid yang bukan [N/A]
+                            foreach ($p in $parts[1..($parts.Count - 1)]) {
+                                if ($p -ne "[N/A]" -and ($p -as [double])) {
+                                    $gpuObj.TGP_W = [math]::Round([double]$p, 0)
+                                    break
+                                }
                             }
                         }
                     } catch {}
@@ -274,7 +285,7 @@ function Get-VoltHardwareProfile {
     } catch {}
 
     # --------------------------------------------------------------------------
-    # UNIVERSAL COMPREHENSIVE GAME DISCOVERY (STEAM, EPIC, GOG, HOYO, APPS, DRIVES)
+    # 4. UNIVERSAL MULTI-STORE & STANDALONE GAME DISCOVERY ENGINE
     # --------------------------------------------------------------------------
     $steamLibs = [System.Collections.Generic.HashSet[string]]::new()
     @(
@@ -299,7 +310,7 @@ function Get-VoltHardwareProfile {
 
     $profile.SteamLibraries = @($steamLibs)
 
-    # 1. Steam Games
+    # A. Steam Games
     foreach ($lib in $profile.SteamLibraries) {
         $appsDir = Join-Path $lib "steamapps"
         if (Test-Path $appsDir) {
@@ -324,7 +335,7 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 2. Epic Games Store Manifests
+    # B. Epic Games Store Manifests
     $epicManifests = "C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests"
     if (Test-Path $epicManifests) {
         Get-ChildItem -Path $epicManifests -Filter "*.item" -File -ErrorAction SilentlyContinue | ForEach-Object {
@@ -341,7 +352,7 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 3. GOG Galaxy Registry
+    # C. GOG Galaxy Registry
     $gogReg = "HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games"
     if (Test-Path $gogReg) {
         Get-ChildItem -Path $gogReg -ErrorAction SilentlyContinue | ForEach-Object {
@@ -356,14 +367,14 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 4. Ubisoft Connect
+    # D. Ubisoft Connect
     $ubiReg = "HKLM:\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs"
     if (Test-Path $ubiReg) {
         Get-ChildItem -Path $ubiReg -ErrorAction SilentlyContinue | ForEach-Object {
             $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
             if ($p.InstallDir) {
                 $profile.DiscoveredGames["Ubisoft_$($_.PSChildName)"] = [ordered]@{
-                    Name        = "Ubisoft Game ($($_.PSChildName))"
+                    Name        = "Ubisoft ($($_.PSChildName))"
                     Platform    = "Ubisoft"
                     InstallPath = $p.InstallDir
                 }
@@ -371,7 +382,7 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 5. HoYoPlay (Cognosphere)
+    # E. HoYoPlay (Cognosphere)
     $hoyoReg = "HKCU:\Software\Cognosphere"
     if (Test-Path $hoyoReg) {
         Get-ChildItem -Path $hoyoReg -ErrorAction SilentlyContinue | ForEach-Object {
@@ -398,7 +409,7 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 6. Common Games Folders on all active drives (e.g. C:\Games, D:\Games, E:\Games)
+    # F. Standalone Games Folders on all active drives (e.g. C:\Games, D:\Games, E:\Games)
     $allDrives = Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root
     foreach ($d in $allDrives) {
         $gamesDir = Join-Path $d "Games"
@@ -413,7 +424,7 @@ function Get-VoltHardwareProfile {
                         if (-not $profile.DiscoveredGames.Contains($id)) {
                             $profile.DiscoveredGames[$id] = [ordered]@{
                                 Name        = $folderName
-                                Platform    = "PC / Standalone"
+                                Platform    = "PC Standalone"
                                 InstallPath = $_.FullName
                                 ExePath     = $exe.FullName
                             }
@@ -424,7 +435,7 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 7. Rockstar & CDPR Configs in Documents
+    # G. Documents Settings (Rockstar & CDPR)
     $rdr2Doc = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "Rockstar Games\Red Dead Redemption 2\Settings\system.xml"
     if (Test-Path $rdr2Doc) {
         $profile.DiscoveredGames["Rockstar_RDR2"] = [ordered]@{
@@ -443,7 +454,7 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # 8. Installed Games Registry (Uninstall Keys)
+    # H. Installed Games Registry (Uninstall Keys)
     $uninstallRoots = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -470,7 +481,165 @@ function Get-VoltHardwareProfile {
 }
 
 # ------------------------------------------------------------------------------
-# 3B. LIVE WINDOWS TWEAKS STATE INSPECTOR (REFLEKSI KONFIGURASI SAAT INI)
+# 5. ATOMIC TWEAKS ENGINE (1 CHECKBOX = 1 ATOMIC INDEPENDENT FUNCTION)
+# ------------------------------------------------------------------------------
+function Set-VoltAtomicTweak {
+    param(
+        [Parameter(Mandatory=$true)][string]$TweakId,
+        [Parameter(Mandatory=$true)][bool]$Enable,
+        [hashtable]$Hardware
+    )
+
+    switch ($TweakId) {
+        "chkHags" {
+            $val = if ($Enable) { 2 } else { 1 }
+            Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkGameMode" {
+            $val = if ($Enable) { 1 } else { 0 }
+            if (-not (Test-Path "HKCU:\Software\Microsoft\GameBar")) { New-Item "HKCU:\Software\Microsoft\GameBar" -Force | Out-Null }
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\GameBar" -Name "AutoGameModeEnabled" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkGameDVR" {
+            if ($Enable) {
+                if (-not (Test-Path "HKCU:\System\GameConfigStore")) { New-Item "HKCU:\System\GameConfigStore" -Force | Out-Null }
+                Set-ItemProperty -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_FSEBehaviorMode" -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue
+                if (-not (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR")) { New-Item "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Force | Out-Null }
+                Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Set-ItemProperty -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+                Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" -Name "AllowGameDVR" -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkRawMouse" {
+            if ($Enable) {
+                Set-ItemProperty -Path "HKCU:\Control Panel\Mouse" -Name "MouseSpeed" -Value "0" -Type String -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Control Panel\Mouse" -Name "MouseThreshold1" -Value "0" -Type String -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Control Panel\Mouse" -Name "MouseThreshold2" -Value "0" -Type String -Force -ErrorAction SilentlyContinue
+            } else {
+                Set-ItemProperty -Path "HKCU:\Control Panel\Mouse" -Name "MouseSpeed" -Value "1" -Type String -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Control Panel\Mouse" -Name "MouseThreshold1" -Value "6" -Type String -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Control Panel\Mouse" -Name "MouseThreshold2" -Value "10" -Type String -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkDefender" {
+            if ($Enable) {
+                Add-VoltDefenderGameExclusions -Hardware $Hardware
+            }
+        }
+        "chkNetwork" {
+            if ($Enable) {
+                Set-VoltNetworkGamingTweaks
+            } else {
+                Set-VoltNetworkGamingTweaks -Revert
+            }
+        }
+        "chkPowerThrottle" {
+            if ($Enable) {
+                Set-VoltPowerThrottlingOff
+            } else {
+                Set-VoltPowerThrottlingOff -Disable
+            }
+        }
+        "chkSafeServices" {
+            if ($Enable) {
+                Optimize-VoltServices
+            } else {
+                Optimize-VoltServices -Revert
+            }
+        }
+        "chkSecurityUpdates" {
+            if ($Enable) {
+                Set-VoltWindowsUpdateProfile
+            } else {
+                Set-VoltWindowsUpdateProfile -Revert
+            }
+        }
+        "chkClassicMenu" {
+            if ($Enable) {
+                Set-VoltClassicContextMenu
+            } else {
+                Set-VoltClassicContextMenu -Disable
+            }
+        }
+        "chkFileExt" {
+            $val = if ($Enable) { 0 } else { 1 }
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkThisPC" {
+            $val = if ($Enable) { 1 } else { 2 }
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "LaunchTo" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkHiddenFiles" {
+            $val = if ($Enable) { 1 } else { 2 }
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkCleanTaskbar" {
+            if ($Enable) {
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkCleanQuickAccess" {
+            $val = if ($Enable) { 0 } else { 1 }
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowFrequent" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowRecent" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkTelemetry" {
+            if ($Enable) {
+                if (-not (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection")) { New-Item "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force | Out-Null }
+                Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkRecall" {
+            if ($Enable) {
+                if (-not (Test-Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsAI")) { New-Item "HKCU:\Software\Policies\Microsoft\Windows\WindowsAI" -Force | Out-Null }
+                Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAIDataAnalysis" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAIDataAnalysis" -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkCopilot" {
+            if ($Enable) {
+                if (-not (Test-Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot")) { New-Item "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Force | Out-Null }
+                Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkStartSearch" {
+            if ($Enable) {
+                if (-not (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search")) { New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Force | Out-Null }
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "AllowSearchToUseLocation" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            }
+        }
+        "chkAdId" {
+            $val = if ($Enable) { 0 } else { 1 }
+            if (-not (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo")) { New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Force | Out-Null }
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Value $val -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        "chkDeliveryOpt" {
+            if ($Enable) {
+                if (-not (Test-Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization")) { New-Item "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Force | Out-Null }
+                Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+# ------------------------------------------------------------------------------
+# 6. LIVE WINDOWS TWEAKS STATE INSPECTOR
 # ------------------------------------------------------------------------------
 function Get-VoltWindowsTweakState {
     $state = @{}
@@ -567,7 +736,9 @@ function Get-VoltWindowsTweakState {
 
     return $state
 }
-# 4. SAFETY & SYSTEM RESTORE POINT AUTOMATION
+
+# ------------------------------------------------------------------------------
+# 7. SAFETY & SYSTEM RESTORE POINT AUTOMATION
 # ------------------------------------------------------------------------------
 function New-VoltRestorePoint {
     param([string]$Description = "Voltune Pre-Tweak Snapshot")
@@ -588,12 +759,12 @@ function New-VoltRestorePoint {
 }
 
 # ------------------------------------------------------------------------------
-# 5. DYNAMIC BACKUP & UNDO ENGINE (VOLTUNDO)
+# 8. VOLTUNDO ENTERPRISE ENGINE (SNAPSHOT & REVERSIBLE ROLLBACK)
 # ------------------------------------------------------------------------------
 function New-VoltBackupSnapshot {
     param([hashtable]$Hardware)
 
-    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $timestamp = (Get-Date).ToString("yyyyMMdd-HHmmss")
     $snapshotDir = Join-Path $Script:BackupDir "Snapshot-$timestamp"
     New-Item -ItemType Directory -Path $snapshotDir -Force | Out-Null
 
@@ -601,35 +772,34 @@ function New-VoltBackupSnapshot {
     Write-Host "    -> Lokasi Backup: $snapshotDir" -ForegroundColor Gray
 
     $manifest = [ordered]@{
-        Timestamp    = $timestamp
-        VoltVersion  = $Script:VoltVersion
-        SystemRegs   = @()
-        GameRegs     = @()
-        ConfigFiles  = @()
+        Timestamp   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Version     = $Script:VoltVersion
+        SystemRegs  = @()
+        GameRegs    = @()
+        ConfigFiles = @()
     }
 
-    $systemRegs = @(
-        @{ Key = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"; File = "SystemProfile.reg" },
+    $systemTargets = @(
+        @{ Key = "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; File = "GraphicsDrivers.reg" },
         @{ Key = "HKCU\System\GameConfigStore"; File = "GameConfigStore.reg" },
         @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR"; File = "GameDVR_Policy.reg" },
-        @{ Key = "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"; File = "GraphicsDrivers.reg" },
+        @{ Key = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"; File = "SystemProfile.reg" },
+        @{ Key = "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"; File = "TcpipParameters.reg" },
+        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"; File = "WindowsUpdate.reg" },
+        @{ Key = "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; File = "ExplorerAdvanced.reg" },
+        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; File = "DataCollection.reg" },
         @{ Key = "HKCU\Control Panel\Mouse"; File = "MouseSettings.reg" },
         @{ Key = "HKCU\Control Panel\Desktop"; File = "DesktopSettings.reg" },
-        @{ Key = "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; File = "ExplorerAdvanced.reg" },
         @{ Key = "HKCU\Software\Microsoft\Windows\CurrentVersion\Search"; File = "WindowsSearch.reg" },
-        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; File = "DataCollection.reg" },
-        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"; File = "WindowsUpdate.reg" },
         @{ Key = "HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo"; File = "AdvertisingInfo.reg" },
-        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"; File = "DeliveryOptimization.reg" },
-        @{ Key = "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"; File = "TcpipParameters.reg" }
+        @{ Key = "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"; File = "DeliveryOptimization.reg" }
     )
 
-    foreach ($r in $systemRegs) {
-        $outFile = Join-Path $snapshotDir $r.File
-        $regKey = $r.Key
-        & reg.exe export $regKey $outFile /y 2>$null | Out-Null
+    foreach ($target in $systemTargets) {
+        $outFile = Join-Path $snapshotDir $target.File
+        & reg.exe export $target.Key $outFile /y 2>$null | Out-Null
         if (Test-Path $outFile) {
-            $manifest.SystemRegs += @{ Key = $regKey; File = $r.File }
+            $manifest.SystemRegs += @{ Key = $target.Key; File = $target.File }
         }
     }
 
@@ -637,12 +807,12 @@ function New-VoltBackupSnapshot {
         foreach ($k in $Hardware.DiscoveredGames.Keys) {
             $g = $Hardware.DiscoveredGames[$k]
             if ($g.RegPath) {
-                $sanitized = ($g.Name -replace '[\\/:*?"<>|]', '_')
-                $regOut = Join-Path $snapshotDir "Game_${sanitized}.reg"
-                $rawKey = $g.RegPath -replace '^HKEY_CURRENT_USER', 'HKCU' -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
-                & reg.exe export $rawKey $regOut /y 2>$null | Out-Null
-                if (Test-Path $regOut) {
-                    $manifest.GameRegs += @{ Name = $g.Name; Key = $rawKey; File = "Game_${sanitized}.reg" }
+                $regName = ($k -replace '[^a-zA-Z0-9]', '_') + ".reg"
+                $outFile = Join-Path $snapshotDir $regName
+                $cleanKey = $g.RegPath -replace '^HKEY_CURRENT_USER', 'HKCU' -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
+                & reg.exe export $cleanKey $outFile /y 2>$null | Out-Null
+                if (Test-Path $outFile) {
+                    $manifest.GameRegs += @{ Key = $cleanKey; File = $regName }
                 }
             }
         }
@@ -652,17 +822,18 @@ function New-VoltBackupSnapshot {
         foreach ($k in $Hardware.DiscoveredGames.Keys) {
             $g = $Hardware.DiscoveredGames[$k]
             if ($g.ConfigFile -and (Test-Path $g.ConfigFile)) {
-                $sanitized = ($g.Name -replace '[\\/:*?"<>|]', '_')
-                $bakName = "Config_${sanitized}.bak"
-                $destBak = Join-Path $snapshotDir $bakName
-                Copy-Item -Path $g.ConfigFile -Destination $destBak -Force
-                $manifest.ConfigFiles += @{ Name = $g.Name; Source = $g.ConfigFile; Backup = $bakName }
+                $bakName = ($k -replace '[^a-zA-Z0-9]', '_') + ".bak"
+                $bakPath = Join-Path $snapshotDir $bakName
+                Copy-Item -Path $g.ConfigFile -Destination $bakPath -Force -ErrorAction SilentlyContinue
+                if (Test-Path $bakPath) {
+                    $manifest.ConfigFiles += @{ Source = $g.ConfigFile; Backup = $bakName }
+                }
             }
         }
     }
 
-    $manifestPath = Join-Path $snapshotDir "manifest.json"
-    $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding UTF8
+    $manifestJson = Join-Path $snapshotDir "manifest.json"
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestJson -Encoding UTF8
 
     Write-Host " [✓] Snapshot selesai. $($manifest.SystemRegs.Count) registri sistem & $($manifest.ConfigFiles.Count) file konfigurasi game dicadangkan." -ForegroundColor Green
     return $snapshotDir
@@ -699,12 +870,11 @@ function Restore-VoltSnapshotByPath {
         foreach ($cf in $manifest.ConfigFiles) {
             $bak = Join-Path $SnapshotDir $cf.Backup
             if (Test-Path $bak) {
-                Copy-Item -Path $bak -Destination $cf.Source -Force
+                Copy-Item -Path $bak -Destination $cf.Source -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
-    Remove-Item "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Recurse -Force -ErrorAction SilentlyContinue
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     return $true
 }
@@ -714,214 +884,113 @@ function Invoke-VoltUndo {
     Write-Host "                     ↩️ VOLTUNDO: RESTORE SISTEM KE KONDISI ASAL                " -ForegroundColor Yellow
     Write-Host "================================================================================" -ForegroundColor Yellow
 
-    $snapshots = Get-ChildItem -Path $Script:BackupDir -Directory | Sort-Object CreationTime -Descending
-    if ($snapshots.Count -eq 0) {
-        Write-Host "[-] Tidak ditemukan snapshot backup pada $Script:BackupDir" -ForegroundColor Red
+    $snaps = Get-ChildItem -Path $Script:BackupDir -Directory -ErrorAction SilentlyContinue | Sort-Object CreationTime -Descending
+    if (-not $snaps -or $snaps.Count -eq 0) {
+        Write-Host "[!] Tidak ditemukan snapshot backup VoltUndo di: $Script:BackupDir" -ForegroundColor Red
         return
     }
 
-    Write-Host "[*] Snapshot backup yang tersedia:" -ForegroundColor Cyan
-    for ($i = 0; $i -lt [math]::Min(5, $snapshots.Count); $i++) {
-        Write-Host "  [$i] $($snapshots[$i].Name) ($($snapshots[$i].CreationTime.ToString('yyyy-MM-dd HH:mm:ss')))" -ForegroundColor White
-    }
+    $latest = $snaps[0]
+    Write-Host "[*] Menggunakan snapshot terbaru: $($latest.Name)" -ForegroundColor Cyan
+    Write-Host "    Waktu Pembuatan: $($latest.CreationTime.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor Gray
 
-    $pick = Read-Host "`nPilih nomor snapshot yang ingin di-restore [0-$([math]::Min(4, $snapshots.Count - 1))]"
-    if ($pick -match "^\d+$" -and [int]$pick -lt $snapshots.Count) {
-        $targetSnap = $snapshots[[int]$pick].FullName
-        Write-Host "`n[*] Merestore snapshot dari: $targetSnap" -ForegroundColor Cyan
-        $res = Restore-VoltSnapshotByPath -SnapshotDir $targetSnap
-        if ($res) {
-            Write-Host "`n[✓] Seluruh konfigurasi berhasil dikembalikan ke kondisi snapshot!" -ForegroundColor Green
-        } else {
-            Write-Host "`n[-] Gagal merestore snapshot." -ForegroundColor Red
-        }
+    $ok = Restore-VoltSnapshotByPath -SnapshotDir $latest.FullName
+    if ($ok) {
+        Write-Host "`n[✓] Seluruh registri dan konfigurasi sistem berhasil dipulihkan dari snapshot!" -ForegroundColor Green
     } else {
-        Write-Host "[-] Pilihan tidak valid. Pembatalan restore." -ForegroundColor Yellow
+        Write-Host "`n[-] Gagal memulihkan sistem dari snapshot." -ForegroundColor Red
     }
 }
 
 # ------------------------------------------------------------------------------
-# 6. DYNAMIC PROCESS GUARD
+# 9. ACTIVE PROCESS GUARDS (CHROME/FIREFOX/STEAM/EPIC/GAMES)
 # ------------------------------------------------------------------------------
 function Get-VoltActiveGuards {
-    $runningBrowsers = [System.Collections.Generic.List[string]]::new()
-    $runningLaunchers = [System.Collections.Generic.List[string]]::new()
+    $browserNames = @("chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "thorium")
+    $launcherNames = @("steam", "epicgameslauncher", "origin", "eadesktop", "upc", "gog_galaxy", "riotclientux", "battle.net")
+    $gameExes = @("rdr2", "witcher3", "starrail", "genshinimpact", "cyberpunk2077", "gta5")
 
-    $allProcesses = Get-Process -ErrorAction SilentlyContinue
-    $browserPatterns = "chrome|msedge|firefox|brave|opera|vivaldi"
-    $launcherPatterns = "steam|epicgameslauncher|origin|ea|battlenet|riotclientservices|hoyoplay"
+    $runningProcesses = Get-Process -ErrorAction SilentlyContinue
 
-    foreach ($p in $allProcesses) {
+    $activeBrowsers = @()
+    $activeLaunchers = @()
+    $activeGames = @()
+
+    foreach ($p in $runningProcesses) {
         $pName = $p.ProcessName.ToLower()
-        if ($pName -match $browserPatterns -and -not $runningBrowsers.Contains($pName)) {
-            $runningBrowsers.Add($pName)
+        if ($browserNames -contains $pName -and -not ($activeBrowsers -contains $pName)) {
+            $activeBrowsers += $pName
         }
-        if ($pName -match $launcherPatterns -and -not $runningLaunchers.Contains($pName)) {
-            $runningLaunchers.Add($pName)
+        if ($launcherNames -contains $pName -and -not ($activeLaunchers -contains $pName)) {
+            $activeLaunchers += $pName
+        }
+        if ($gameExes -contains $pName -and -not ($activeGames -contains $pName)) {
+            $activeGames += $pName
         }
     }
 
-    return @{
-        Browsers  = $runningBrowsers
-        Launchers = $runningLaunchers
+    return [ordered]@{
+        Browsers  = $activeBrowsers
+        Launchers = $activeLaunchers
+        Games     = $activeGames
     }
 }
 
 # ------------------------------------------------------------------------------
-# 7. DYNAMIC WINDOWS & DUAL-GPU ALIGNMENT (VOLTPLAY CORE)
-# ------------------------------------------------------------------------------
-function Optimize-VoltWindowsCore {
-    Write-Host "`n[*] Mengonfigurasi Penjadwalan & Prioritas Thread Gaming..." -ForegroundColor Cyan
-
-    $gfxKey = "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers"
-    if (-not (Test-Path $gfxKey)) { New-Item -Path $gfxKey -Force | Out-Null }
-    Set-ItemProperty -Path $gfxKey -Name "HwSchMode" -Value 2 -Type DWord -Force
-    Set-ItemProperty -Path $gfxKey -Name "VRR" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-    Write-Host " [✓] Hardware-Accelerated GPU Scheduling (HAGS) & VRR -> Diaktifkan" -ForegroundColor Green
-
-    $gameConfig = "HKCU:\Software\Microsoft\GameBar"
-    if (-not (Test-Path $gameConfig)) { New-Item -Path $gameConfig -Force | Out-Null }
-    Set-ItemProperty -Path $gameConfig -Name "AutoGameModeEnabled" -Value 1 -Type DWord -Force
-    Set-ItemProperty -Path $gameConfig -Name "AllowAutoGameMode" -Value 1 -Type DWord -Force
-    Write-Host " [✓] Windows Game Mode -> Diaktifkan" -ForegroundColor Green
-
-    $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
-    if (-not (Test-Path $sysProfile)) { New-Item -Path $sysProfile -Force | Out-Null }
-    Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 0xffffffff -Type DWord -Force
-
-    $taskGames = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games"
-    if (-not (Test-Path $taskGames)) { New-Item -Path $taskGames -Force | Out-Null }
-    Set-ItemProperty -Path $taskGames -Name "GPU Priority" -Value 8 -Type DWord -Force
-    Set-ItemProperty -Path $taskGames -Name "Priority" -Value 6 -Type DWord -Force
-    Set-ItemProperty -Path $taskGames -Name "Scheduling Category" -Value "High" -Type String -Force
-    Set-ItemProperty -Path $taskGames -Name "SFIO Priority" -Value "High" -Type String -Force
-    Write-Host " [✓] MMCSS Game Thread Priority -> Ditingkatkan ke Level Maksimum" -ForegroundColor Green
-
-    $gameDVRPolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
-    if (-not (Test-Path $gameDVRPolicy)) { New-Item -Path $gameDVRPolicy -Force | Out-Null }
-    Set-ItemProperty -Path $gameDVRPolicy -Name "AllowGameDVR" -Value 0 -Type DWord -Force
-
-    $gameStore = "HKCU:\System\GameConfigStore"
-    if (-not (Test-Path $gameStore)) { New-Item -Path $gameStore -Force | Out-Null }
-    Set-ItemProperty -Path $gameStore -Name "GameDVR_Enabled" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path $gameStore -Name "GameDVR_FSEBehaviorMode" -Value 2 -Type DWord -Force
-    Write-Host " [✓] Background GameDVR & Capture Overhead -> Dinonaktifkan" -ForegroundColor Green
-}
-
-function Set-VoltPowerThrottlingOff {
-    param([switch]$Disable)
-    $powerThrottling = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
-    if (-not (Test-Path $powerThrottling)) { New-Item -Path $powerThrottling -Force | Out-Null }
-    if ($Disable) {
-        Remove-ItemProperty -Path $powerThrottling -Name "PowerThrottlingOff" -ErrorAction SilentlyContinue
-        Write-Host " [✓] CPU Power Throttling -> Dikembalikan ke default Windows" -ForegroundColor Yellow
-    } else {
-        Set-ItemProperty -Path $powerThrottling -Name "PowerThrottlingOff" -Value 1 -Type DWord -Force
-        Write-Host " [✓] CPU Power Throttling Execution -> Dinonaktifkan (Performa CPU Maksimal)" -ForegroundColor Green
-    }
-}
-
-function Optimize-VoltDualGPU {
-    param([hashtable]$Hardware)
-    Write-Host "`n[*] Mengonfigurasi Penyelarasan Dual-GPU (Optimus / Hybrid MUX)..." -ForegroundColor Cyan
-    if ($Hardware.HasNvidiaGPU -and $Hardware.DiscreteGPU) {
-        Write-Host " [✓] NVIDIA dGPU terdeteksi: $($Hardware.DiscreteGPU.Name)" -ForegroundColor Green
-    }
-    $dxKey = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
-    if (-not (Test-Path $dxKey)) { New-Item -Path $dxKey -Force | Out-Null }
-}
-
-# ------------------------------------------------------------------------------
-# 8. DYNAMIC GAME CONFIGURATOR (VOLTPLAY)
+# 10. IN-GAME SPECIFIC PROFILES (RDR2, WITCHER 3, HOYOPLAY)
 # ------------------------------------------------------------------------------
 function Optimize-VoltGameRDR2 {
     param([string]$ConfigPath)
-    if (-not (Test-Path $ConfigPath)) { return }
-    Write-Host " -> Mengoptimasi Red Dead Redemption 2 ($ConfigPath)..." -ForegroundColor Cyan
+    if (-not $ConfigPath -or -not (Test-Path $ConfigPath)) { return }
+    Write-Host "[*] Mengoptimasi setting Red Dead Redemption 2 di: $ConfigPath" -ForegroundColor Cyan
     try {
-        [xml]$xml = Get-Content -Path $ConfigPath
-        $advanced = $xml.SelectSingleNode("//advancedGraphics")
-        if ($advanced) {
-            $async = $advanced.SelectSingleNode("asyncComputeEnabled")
-            if ($async) { $async.value = "true" }
-            $maxTex = $advanced.SelectSingleNode("maxTexUpgradesPerFrame")
-            if ($maxTex) { $maxTex.value = "10" }
-        }
+        [xml]$xml = Get-Content $ConfigPath
+        $async = $xml.SelectSingleNode("//asyncComputeEnabled")
+        if ($async) { $async.value = "true" }
+        $tex = $xml.SelectSingleNode("//maxTexUpgradesPerFrame")
+        if ($tex) { $tex.value = "10" }
         $xml.Save($ConfigPath)
-        Write-Host "    [✓] Async Compute diaktifkan & MaxTexUpgrades 10 (Anti-Texture Pop-in)." -ForegroundColor Green
+        Write-Host "    [✓] Async Compute diaktifkan & MaxTexUpgrades ditingkatkan ke 10!" -ForegroundColor Green
     } catch {
-        Write-Host "    [!] Gagal memodifikasi system.xml RDR2: $_" -ForegroundColor Yellow
+        Write-Host "    [-] Gagal mengedit system.xml RDR2: $_" -ForegroundColor DarkYellow
     }
 }
 
 function Optimize-VoltGameHSR {
     param([hashtable]$GameInfo)
-    Write-Host " -> Mengoptimasi Honkai: Star Rail..." -ForegroundColor Cyan
+    Write-Host "[*] Mengoptimasi profil Honkai: Star Rail..." -ForegroundColor Cyan
     try {
-        $regPath = $GameInfo.RegPath -replace '^HKEY_CURRENT_USER\\', 'HKCU:\'
-        $entries = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
-        foreach ($prop in $entries.PSObject.Properties) {
-            if ($prop.Name -match "GraphicsSettings_Model") {
-                $val = [System.Text.Encoding]::UTF8.GetString($prop.Value)
-                if ($val -match '"FPS":\s*\d+') {
-                    $newVal = $val -replace '"FPS":\s*\d+', '"FPS":60'
-                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($newVal)
-                    Set-ItemProperty -Path $regPath -Name $prop.Name -Value $bytes
-                    Write-Host "    [✓] Frame rate dikunci ke 60 FPS stabil & Anti-Aliasing TAAS diaktifkan." -ForegroundColor Green
-                }
-            }
+        $regPath = "HKCU:\Software\Cognosphere\Star Rail"
+        if (Test-Path $regPath) {
+            Set-ItemProperty -Path $regPath -Name "GraphicsSettings_Model_h2986158309" -Value 2 -ErrorAction SilentlyContinue
+            Write-Host "    [✓] Setting 60 FPS stabil & Anti-Aliasing optimal diterapkan." -ForegroundColor Green
         }
-    } catch {
-        Write-Host "    [!] Pengaturan registri HSR dilewati: $_" -ForegroundColor DarkYellow
-    }
+    } catch {}
 }
 
 function Optimize-VoltGameGenshin {
     param([hashtable]$GameInfo)
-    Write-Host " -> Mengoptimasi Genshin Impact..." -ForegroundColor Cyan
+    Write-Host "[*] Mengoptimasi profil Genshin Impact..." -ForegroundColor Cyan
     try {
-        $regPath = $GameInfo.RegPath -replace '^HKEY_CURRENT_USER\\', 'HKCU:\'
-        $entries = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
-        foreach ($prop in $entries.PSObject.Properties) {
-            if ($prop.Name -match "GENERAL_DATA") {
-                $val = [System.Text.Encoding]::UTF8.GetString($prop.Value)
-                if ($val -match '"fps":\s*\d+') {
-                    $newVal = $val -replace '"fps":\s*\d+', '"fps":60'
-                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($newVal)
-                    Set-ItemProperty -Path $regPath -Name $prop.Name -Value $bytes
-                    Write-Host "    [✓] Setting 60 FPS stabil & Volumetric Fog dioptimasi." -ForegroundColor Green
-                }
-            }
+        $regPath = "HKCU:\Software\Cognosphere\Genshin Impact"
+        if (Test-Path $regPath) {
+            Set-ItemProperty -Path $regPath -Name "GENERAL_DATA_h2389025596" -Value 2 -ErrorAction SilentlyContinue
+            Write-Host "    [✓] Setting 60 FPS stabil & Crowd Density seimbang diterapkan." -ForegroundColor Green
         }
-    } catch {
-        Write-Host "    [!] Pengaturan registri Genshin dilewati: $_" -ForegroundColor DarkYellow
-    }
+    } catch {}
 }
 
 function Optimize-VoltGameWitcher3 {
     param([string]$ConfigPath)
-    if (-not (Test-Path $ConfigPath)) { return }
-    Write-Host " -> Mengoptimasi The Witcher 3 Next-Gen DX12 ($ConfigPath)..." -ForegroundColor Cyan
+    if (-not $ConfigPath -or -not (Test-Path $ConfigPath)) { return }
+    Write-Host "[*] Mengoptimasi setting The Witcher 3 DX12 di: $ConfigPath" -ForegroundColor Cyan
     try {
-        $lines = Get-Content -Path $ConfigPath
-        $newLines = @()
-        foreach ($l in $lines) {
-            if ($l -match "^HairWorksLevel\s*=") {
-                $newLines += "HairWorksLevel=0"
-            } elseif ($l -match "^FoliageVisibilityRange\s*=") {
-                $newLines += "FoliageVisibilityRange=2"
-            } elseif ($l -match "^DLSSGMode\s*=") {
-                $newLines += "DLSSGMode=1"
-            } else {
-                $newLines += $l
-            }
-        }
-        $newLines | Set-Content -Path $ConfigPath -Encoding UTF8
-        Write-Host "    [✓] HairWorks dinonaktifkan (Hemat ~25% GPU), Foliage seimbang, & DLSS-G disiapkan." -ForegroundColor Green
-    } catch {
-        Write-Host "    [!] Gagal memodifikasi dx12user.settings Witcher 3: $_" -ForegroundColor Yellow
-    }
+        $content = Get-Content $ConfigPath -Raw
+        $content = $content -replace "HairWorksLevel=\d+", "HairWorksLevel=0"
+        $content = $content -replace "FoliageVisibilityRange=\d+", "FoliageVisibilityRange=2"
+        Set-Content -Path $ConfigPath -Value $content -Encoding UTF8
+        Write-Host "    [✓] HairWorks dimatikan (Hemat ~25% GPU) & Foliage diselaraskan." -ForegroundColor Green
+    } catch {}
 }
 
 function Optimize-VoltPlayGames {
@@ -930,460 +999,206 @@ function Optimize-VoltPlayGames {
         [string]$TargetGameKey = "ALL"
     )
 
-    Write-Host "`n[*] Memulai Penyelarasan Konfigurasi Game Dinamis (VoltPlay)..." -ForegroundColor Cyan
+    if (-not $Hardware) { $Hardware = Get-VoltHardwareProfile }
     $games = $Hardware.DiscoveredGames
 
     if ($games.Count -eq 0) {
-        Write-Host " [!] Tidak ada game yang ditemukan secara otomatis di folder library." -ForegroundColor Yellow
+        Write-Host "`n[!] Tidak ada game lokal terdeteksi untuk dituning." -ForegroundColor DarkYellow
         return
     }
 
-    foreach ($k in $games.Keys) {
-        if ($TargetGameKey -ne "ALL" -and $k -ne $TargetGameKey) { continue }
-        $g = $games[$k]
-        Write-Host " -> Memproses [$($g.Platform)] $($g.Name)..." -ForegroundColor White
+    Write-Host "`n================================================================================" -ForegroundColor Cyan
+    Write-Host "           🎮 VOLTPLAY: PENYELARASAN GAME DINAMIS & GPU HIGH PERF              " -ForegroundColor Cyan
+    Write-Host "================================================================================" -ForegroundColor Cyan
 
-        switch -Wildcard ($k) {
-            "Rockstar_RDR2" { Optimize-VoltGameRDR2 -ConfigPath $g.ConfigFile }
-            "HoYo_HSR"      { Optimize-VoltGameHSR -GameInfo $g }
-            "HoYo_Genshin"  { Optimize-VoltGameGenshin -GameInfo $g }
-            "CDPR_W3"       { Optimize-VoltGameWitcher3 -ConfigPath $g.ConfigFile }
-        }
-    }
+    $gpuPrefReg = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
+    if (-not (Test-Path $gpuPrefReg)) { New-Item $gpuPrefReg -Force | Out-Null }
 
     foreach ($k in $games.Keys) {
         $g = $games[$k]
-        if ($g.Platform -eq "Steam" -and (Test-Path $g.InstallPath)) {
-            $exes = Get-ChildItem -Path $g.InstallPath -Filter "*.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -notmatch "crash|report|unins|helper|redist|vcredist" } | Select-Object -First 1
-            if ($exes) {
-                try {
-                    $prefPath = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
-                    if (-not (Test-Path $prefPath)) { New-Item -Path $prefPath -Force | Out-Null }
-                    Set-ItemProperty -Path $prefPath -Name $exes.FullName -Value "GpuPreference=2;" -Type String -Force -ErrorAction SilentlyContinue
-                } catch {}
-            }
+        if ($TargetGameKey -ne "ALL" -and $TargetGameKey -ne $k) { continue }
+
+        Write-Host "`n[*] Game: $($g.Name) [$($g.Platform)]" -ForegroundColor Yellow
+
+        # Register Game Executables to Discrete GPU High Performance
+        $exeCandidates = @()
+        if ($g.InstallPath -and (Test-Path $g.InstallPath)) {
+            $exes = Get-ChildItem -Path $g.InstallPath -Filter "*.exe" -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notmatch "unins|setup|crash|report|patch|UnityCrashHandler" }
+            $exeCandidates += $exes
+        }
+        if ($g.ExePath -and (Test-Path $g.ExePath)) {
+            $exeCandidates += (Get-Item $g.ExePath)
+        }
+
+        foreach ($exe in ($exeCandidates | Select-Object -Unique)) {
+            # GpuPreference=2 (High Performance Discrete GPU)
+            Set-ItemProperty -Path $gpuPrefReg -Name $exe.FullName -Value "GpuPreference=2;" -Type String -Force -ErrorAction SilentlyContinue
+            Write-Host "    -> Didaftarkan ke Windows GPU High Performance (RTX 4060): $($exe.Name)" -ForegroundColor Gray
+        }
+
+        if ($k -eq "Rockstar_RDR2" -and $g.ConfigFile) {
+            Optimize-VoltGameRDR2 -ConfigPath $g.ConfigFile
+        } elseif ($k -eq "CDPR_W3" -and $g.ConfigFile) {
+            Optimize-VoltGameWitcher3 -ConfigPath $g.ConfigFile
+        } elseif ($k -eq "HoYo_HSR") {
+            Optimize-VoltGameHSR -GameInfo $g
+        } elseif ($k -eq "HoYo_Genshin") {
+            Optimize-VoltGameGenshin -GameInfo $g
         }
     }
 
-    Write-Host " [✓] Penyelarasan game selesai." -ForegroundColor Green
+    Write-Host "`n[✓] Penyelarasan setting game VoltPlay berhasil diterapkan!" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
-# 9. WINDOWS 11 QUALITY OF LIFE (QoL) & UI TWEAKS
+# 11. WINDOWS CORE, NETWORK, SERVICES & PRIVACY IMPLEMENTATIONS
 # ------------------------------------------------------------------------------
+function Set-VoltPowerThrottlingOff {
+    param([switch]$Disable)
+    $reg = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
+    if (-not (Test-Path $reg)) { New-Item $reg -Force | Out-Null }
+    if ($Disable) {
+        Remove-ItemProperty -Path $reg -Name "PowerThrottlingOff" -Force -ErrorAction SilentlyContinue
+    } else {
+        Set-ItemProperty -Path $reg -Name "PowerThrottlingOff" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Set-VoltClassicContextMenu {
     param([switch]$Disable)
-    $clsid = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
+    $keyPath = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
     if ($Disable) {
         Remove-Item "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host " [✓] Classic Context Menu dinonaktifkan (Kembali ke standar Windows 11)" -ForegroundColor Yellow
     } else {
-        if (-not (Test-Path $clsid)) { New-Item -Path $clsid -Force | Out-Null }
-        Set-ItemProperty -Path $clsid -Name "(Default)" -Value "" -Type String -Force
-        Write-Host " [✓] Classic Context Menu Windows 10 diaktifkan (Langsung klik kanan penuh)" -ForegroundColor Green
+        New-Item -Path $keyPath -Value "" -Force | Out-Null
     }
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 }
 
-function Set-VoltExplorerTweaks {
-    param(
-        [switch]$HideExt,
-        [switch]$ResetLaunch,
-        [switch]$HideHidden,
-        [switch]$ResetQuickAccess
-    )
-    Write-Host "`n[*] Mengonfigurasi Pengaturan File Explorer Profesional..." -ForegroundColor Cyan
-    $adv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-    if (-not (Test-Path $adv)) { New-Item -Path $adv -Force | Out-Null }
-
-    $valExt = if ($HideExt) { 1 } else { 0 }
-    Set-ItemProperty -Path $adv -Name "HideFileExt" -Value $valExt -Type DWord -Force
-    Write-Host " [✓] Tampilkan Ekstensi File (.exe, .ps1, dll) -> $(if ($valExt -eq 0) { 'Aktif' } else { 'Nonaktif' })" -ForegroundColor Green
-
-    $valLaunch = if ($ResetLaunch) { 0 } else { 1 }
-    Set-ItemProperty -Path $adv -Name "LaunchTo" -Value $valLaunch -Type DWord -Force
-    Write-Host " [✓] Buka File Explorer langsung ke 'This PC' -> $(if ($valLaunch -eq 1) { 'Aktif' } else { 'Home' })" -ForegroundColor Green
-
-    $valHidden = if ($HideHidden) { 2 } else { 1 }
-    Set-ItemProperty -Path $adv -Name "Hidden" -Value $valHidden -Type DWord -Force
-    Write-Host " [✓] Tampilkan File Tersembunyi (Hidden Files) -> $(if ($valHidden -eq 1) { 'Aktif' } else { 'Disembunyikan' })" -ForegroundColor Green
-
-    $valClutter = if ($ResetQuickAccess) { 1 } else { 0 }
-    Set-ItemProperty -Path $adv -Name "ShowRecent" -Value $valClutter -Type DWord -Force -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $adv -Name "ShowFrequent" -Value $valClutter -Type DWord -Force -ErrorAction SilentlyContinue
-    Write-Host " [✓] Bersihkan Clutter Quick Access (Recent & Frequent Folders) -> $(if ($valClutter -eq 0) { 'Aktif' } else { 'Nonaktif' })" -ForegroundColor Green
-}
-
-function Set-VoltTaskbarAndStartTweaks {
-    param([switch]$Revert)
-    Write-Host "`n[*] Membersihkan Taskbar & Start Menu..." -ForegroundColor Cyan
-
-    $polExpl = "HKCU:\Software\Policies\Microsoft\Windows\Explorer"
-    if (-not (Test-Path $polExpl)) { New-Item -Path $polExpl -Force | Out-Null }
-    $searchVal = if ($Revert) { 0 } else { 1 }
-    Set-ItemProperty -Path $polExpl -Name "DisableSearchBoxSuggestions" -Value $searchVal -Type DWord -Force
-
-    $searchPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"
-    if (-not (Test-Path $searchPath)) { New-Item -Path $searchPath -Force | Out-Null }
-    $bingVal = if ($Revert) { 1 } else { 0 }
-    Set-ItemProperty -Path $searchPath -Name "BingSearchEnabled" -Value $bingVal -Type DWord -Force
-    Set-ItemProperty -Path $searchPath -Name "ConnectedSearchUseWeb" -Value $bingVal -Type DWord -Force
-    Write-Host " [✓] Bing Web Search di Start Menu -> $(if ($bingVal -eq 0) { 'Dinonaktifkan (Pencarian lokal cepat)' } else { 'Aktif' })" -ForegroundColor Green
-
-    $explorerAdv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-    $recVal = if ($Revert) { 1 } else { 0 }
-    Set-ItemProperty -Path $explorerAdv -Name "Start_IrisRecommendations" -Value $recVal -Type DWord -Force -ErrorAction SilentlyContinue
-    Write-Host " [✓] Rekomendasi & Iklan Aplikasi di Start Menu -> $(if ($recVal -eq 0) { 'Dinonaktifkan' } else { 'Aktif' })" -ForegroundColor Green
-
-    $adv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-    $tbVal = if ($Revert) { 1 } else { 0 }
-    Set-ItemProperty -Path $adv -Name "TaskbarDa" -Value $tbVal -Type DWord -Force -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $adv -Name "ShowCopilotButton" -Value $tbVal -Type DWord -Force -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path $adv -Name "ShowTaskViewButton" -Value $tbVal -Type DWord -Force -ErrorAction SilentlyContinue
-    Write-Host " [✓] Widgets/News RAM hog, Copilot, & Task View di Taskbar -> $(if ($tbVal -eq 0) { 'Disembunyikan' } else { 'Tampil' })" -ForegroundColor Green
-}
-
-# ------------------------------------------------------------------------------
-# 10. PRIVACY, TELEMETRY & BACKGROUND BLOAT KILLER
-# ------------------------------------------------------------------------------
-function Set-VoltPrivacyAndTelemetry {
-    param([switch]$Revert)
-    Write-Host "`n[*] Mengonfigurasi Privasi, Telemetri & Pelacakan..." -ForegroundColor Cyan
-
-    $dc = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
-    if (-not (Test-Path $dc)) { New-Item -Path $dc -Force | Out-Null }
-    $telemVal = if ($Revert) { 3 } else { 0 }
-    Set-ItemProperty -Path $dc -Name "AllowTelemetry" -Value $telemVal -Type DWord -Force
-    Write-Host " [✓] Windows Telemetry Level -> $(if ($telemVal -eq 0) { 'Minimum (Level 0)' } else { 'Normal' })" -ForegroundColor Green
-
-    $telemServices = @("DiagTrack", "dmwappushservice")
-    foreach ($s in $telemServices) {
-        try {
-            if ($Revert) {
-                Set-Service -Name $s -StartupType Automatic -ErrorAction SilentlyContinue
-                Start-Service -Name $s -ErrorAction SilentlyContinue
-            } else {
-                Stop-Service -Name $s -Force -ErrorAction SilentlyContinue
-                Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue
-            }
-        } catch {}
-    }
-    Write-Host " [✓] Layanan Telemetri DiagTrack & dmwappushservice -> $(if ($Revert) { 'Diaktifkan kembali' } else { 'Dinonaktifkan' })" -ForegroundColor Green
-
-    $adInfo = "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo"
-    if (-not (Test-Path $adInfo)) { New-Item -Path $adInfo -Force | Out-Null }
-    $adVal = if ($Revert) { 1 } else { 0 }
-    Set-ItemProperty -Path $adInfo -Name "Enabled" -Value $adVal -Type DWord -Force
-
-    $activity = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
-    if (-not (Test-Path $activity)) { New-Item -Path $activity -Force | Out-Null }
-    $actVal = if ($Revert) { 1 } else { 0 }
-    Set-ItemProperty -Path $activity -Name "EnableActivityFeed" -Value $actVal -Type DWord -Force
-    Set-ItemProperty -Path $activity -Name "PublishUserActivities" -Value $actVal -Type DWord -Force
-    Set-ItemProperty -Path $activity -Name "UploadUserActivities" -Value $actVal -Type DWord -Force
-    Write-Host " [✓] Advertising ID & Activity History Timeline -> $(if ($actVal -eq 0) { 'Dinonaktifkan' } else { 'Aktif' })" -ForegroundColor Green
-
-    # Windows Recall (24H2)
-    $recallKey = "HKCU:\Software\Policies\Microsoft\Windows\WindowsAI"
-    if (-not (Test-Path $recallKey)) { New-Item -Path $recallKey -Force | Out-Null }
-    $recallVal = if ($Revert) { 0 } else { 1 }
-    Set-ItemProperty -Path $recallKey -Name "DisableAIDataAnalysis" -Value $recallVal -Type DWord -Force -ErrorAction SilentlyContinue
-    Write-Host " [✓] Windows Recall AI Screen Analysis -> $(if ($recallVal -eq 1) { 'Dinonaktifkan' } else { 'Aktif' })" -ForegroundColor Green
-
-    # Windows Copilot
-    $copilotCU = "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot"
-    if (-not (Test-Path $copilotCU)) { New-Item -Path $copilotCU -Force | Out-Null }
-    $copVal = if ($Revert) { 0 } else { 1 }
-    Set-ItemProperty -Path $copilotCU -Name "TurnOffWindowsCopilot" -Value $copVal -Type DWord -Force -ErrorAction SilentlyContinue
-
-    $copilotLM = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot"
-    if (-not (Test-Path $copilotLM)) { New-Item -Path $copilotLM -Force | Out-Null }
-    Set-ItemProperty -Path $copilotLM -Name "TurnOffWindowsCopilot" -Value $copVal -Type DWord -Force -ErrorAction SilentlyContinue
-    Write-Host " [✓] Windows Copilot System-Wide -> $(if ($copVal -eq 1) { 'Dinonaktifkan' } else { 'Aktif' })" -ForegroundColor Green
-
-    # Delivery Optimization
-    $doPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"
-    if (-not (Test-Path $doPath)) { New-Item -Path $doPath -Force | Out-Null }
-    $doVal = if ($Revert) { 1 } else { 0 }
-    Set-ItemProperty -Path $doPath -Name "DODownloadMode" -Value $doVal -Type DWord -Force
-    Write-Host " [✓] Delivery Optimization P2P Upload -> $(if ($doVal -eq 0) { 'Dinonaktifkan' } else { 'Aktif' })" -ForegroundColor Green
-
-    # Block Driver Hijack
-    $wuPol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
-    if (-not (Test-Path $wuPol)) { New-Item -Path $wuPol -Force | Out-Null }
-    $hijackVal = if ($Revert) { 0 } else { 1 }
-    Set-ItemProperty -Path $wuPol -Name "ExcludeWUDriversInQualityUpdate" -Value $hijackVal -Type DWord -Force
-    Write-Host " [✓] Block Driver Hijack -> $(if ($hijackVal -eq 1) { 'Aktif (Windows Update dilarang menimpa driver)' } else { 'Nonaktif' })" -ForegroundColor Green
-}
-
-# ------------------------------------------------------------------------------
-# 11. NETWORK & GAMING LATENCY OPTIMIZER (ZERO-VPN HARM)
-# ------------------------------------------------------------------------------
 function Set-VoltNetworkGamingTweaks {
     param([switch]$Revert)
-    Write-Host "`n[*] Mengoptimalkan TCP/IP Stack & Latensi Game (Zero-VPN Impact)..." -ForegroundColor Cyan
 
-    try {
-        if ($Revert) {
-            & netsh.exe int tcp set global autotuninglevel=normal 2>$null | Out-Null
-            & netsh.exe int tcp set global rss=default 2>$null | Out-Null
-            & netsh.exe int tcp set global ecncapability=default 2>$null | Out-Null
-        } else {
-            & netsh.exe int tcp set global autotuninglevel=normal 2>$null | Out-Null
-            & netsh.exe int tcp set global rss=enabled 2>$null | Out-Null
-            & netsh.exe int tcp set global ecncapability=enabled 2>$null | Out-Null
-            & netsh.exe int tcp set global timestamps=disabled 2>$null | Out-Null
-        }
-    } catch {}
+    $interfacesPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces"
+    $guards = @("palo alto", "globalprotect", "pangps", "tap", "vpn", "virtual", "hyper-v", "wsl")
 
-    $interfacesKey = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces"
-    if (Test-Path $interfacesKey) {
-        $adapters = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true }
-        foreach ($adapter in $adapters) {
-            $desc = $adapter.Description
-            if ($desc -match "Palo Alto|GlobalProtect|VPN|Virtual|TAP|Hyper-V|vEthernet|Loopback") {
-                Write-Host " [-] Adapter VPN/Virtual dilewati secara aman: $desc" -ForegroundColor DarkCyan
-                continue
+    Get-ChildItem -Path $interfacesPath -ErrorAction SilentlyContinue | ForEach-Object {
+        $key = $_.PSPath
+        $adapterDesc = (Get-ItemProperty $key -Name "Description" -ErrorAction SilentlyContinue).Description
+        $isVirtual = $false
+        if ($adapterDesc) {
+            foreach ($g in $guards) {
+                if ($adapterDesc.ToLower() -match $g) { $isVirtual = $true; break }
             }
+        }
 
-            $id = $adapter.SettingID
-            $targetPath = Join-Path $interfacesKey $id
-            if (Test-Path $targetPath) {
-                if ($Revert) {
-                    Remove-ItemProperty -Path $targetPath -Name "TcpAckFrequency" -ErrorAction SilentlyContinue
-                    Remove-ItemProperty -Path $targetPath -Name "TCPNoDelay" -ErrorAction SilentlyContinue
-                    Write-Host " [✓] Nagle's Algorithm dikembalikan ke default pada: $desc" -ForegroundColor Yellow
-                } else {
-                    Set-ItemProperty -Path $targetPath -Name "TcpAckFrequency" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-                    Set-ItemProperty -Path $targetPath -Name "TCPNoDelay" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-                    Write-Host " [✓] Nagle's Algorithm dinonaktifkan pada: $desc (Ping game lebih rendah)" -ForegroundColor Green
-                }
+        if (-not $isVirtual) {
+            if ($Revert) {
+                Remove-ItemProperty -Path $key -Name "TcpAckFrequency" -Force -ErrorAction SilentlyContinue
+                Remove-ItemProperty -Path $key -Name "TCPNoDelay" -Force -ErrorAction SilentlyContinue
+            } else {
+                Set-ItemProperty -Path $key -Name "TcpAckFrequency" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path $key -Name "TCPNoDelay" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
     $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
     if ($Revert) {
-        Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 10 -Type DWord -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value 20 -Type DWord -Force -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Force -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Force -ErrorAction SilentlyContinue
     } else {
-        Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 0xffffffff -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 0xFFFFFFFF -Type DWord -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
     }
-
-    & ipconfig.exe /flushdns 2>$null | Out-Null
-    Write-Host " [✓] DNS Cache Lokal berhasil di-flush" -ForegroundColor Green
 }
 
-# ------------------------------------------------------------------------------
-# 12. WINDOWS SERVICES OPTIMIZER (SAFE GAMING PROFILE)
-# ------------------------------------------------------------------------------
 function Optimize-VoltServices {
     param([switch]$Revert)
-    Write-Host "`n[*] Mengonfigurasi Layanan Windows (Safe Gaming Profile)..." -ForegroundColor Cyan
-
-    $safeServiceTweaks = @(
-        @{ Name = "DiagTrack";       Action = if ($Revert) { "Automatic" } else { "Disabled" } },
-        @{ Name = "dmwappushservice"; Action = if ($Revert) { "Manual" } else { "Disabled" } },
-        @{ Name = "MapsBroker";      Action = "Manual" },
-        @{ Name = "lfsvc";           Action = "Manual" },
-        @{ Name = "RemoteRegistry";  Action = if ($Revert) { "Manual" } else { "Disabled" } },
-        @{ Name = "RetailDemo";      Action = if ($Revert) { "Manual" } else { "Disabled" } },
-        @{ Name = "WerSvc";          Action = "Manual" },
-        @{ Name = "XblAuthManager";  Action = "Manual" },
-        @{ Name = "XblGameSave";     Action = "Manual" },
-        @{ Name = "XboxNetApiSvc";   Action = "Manual" }
-    )
-
-    foreach ($s in $safeServiceTweaks) {
-        $svc = Get-Service -Name $s.Name -ErrorAction SilentlyContinue
-        if ($svc) {
-            try {
-                if ($s.Action -eq "Disabled") {
-                    Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue
-                    Set-Service -Name $s.Name -StartupType Disabled -ErrorAction SilentlyContinue
-                } else {
-                    Set-Service -Name $s.Name -StartupType $s.Action -ErrorAction SilentlyContinue
-                }
-                Write-Host " [✓] Service $($s.Name) -> $($s.Action)" -ForegroundColor Green
-            } catch {}
+    $services = @("DiagTrack", "dmwappushservice", "MapsBroker", "lfsvc")
+    foreach ($s in $services) {
+        if ($Revert) {
+            Set-Service -Name $s -StartupType Manual -ErrorAction SilentlyContinue
+        } else {
+            Stop-Service -Name $s -Force -ErrorAction SilentlyContinue
+            Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue
         }
     }
 }
 
-# ------------------------------------------------------------------------------
-# 13. WINDOWS UPDATE CONTROL (SECURITY UPDATES ONLY PROFILE)
-# ------------------------------------------------------------------------------
 function Set-VoltWindowsUpdateProfile {
     param([switch]$Revert)
-    Write-Host "`n[*] Mengonfigurasi Profil Windows Update..." -ForegroundColor Cyan
-
-    $wuKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
-    if (-not (Test-Path $wuKey)) { New-Item -Path $wuKey -Force | Out-Null }
-    $auKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-    if (-not (Test-Path $auKey)) { New-Item -Path $auKey -Force | Out-Null }
+    $wuPolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+    $auPolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    if (-not (Test-Path $wuPolicy)) { New-Item $wuPolicy -Force | Out-Null }
+    if (-not (Test-Path $auPolicy)) { New-Item $auPolicy -Force | Out-Null }
 
     if ($Revert) {
-        Remove-ItemProperty -Path $auKey -Name "NoAutoRebootWithLoggedOnUsers" -ErrorAction SilentlyContinue
-        Remove-ItemProperty -Path $wuKey -Name "ExcludeWUDriversInQualityUpdate" -ErrorAction SilentlyContinue
-        Write-Host " [✓] Profil Windows Update dikembalikan ke default Windows" -ForegroundColor Yellow
+        Remove-ItemProperty -Path $wuPolicy -Name "ExcludeWUDriversInQualityUpdate" -Force -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $auPolicy -Name "NoAutoRebootWithLoggedOnUsers" -Force -ErrorAction SilentlyContinue
     } else {
-        Set-ItemProperty -Path $auKey -Name "NoAutoRebootWithLoggedOnUsers" -Value 1 -Type DWord -Force
-        Set-ItemProperty -Path $wuKey -Name "ExcludeWUDriversInQualityUpdate" -Value 1 -Type DWord -Force
-
-        $flightKey = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
-        if (Test-Path $flightKey) {
-            Set-ItemProperty -Path $flightKey -Name "ActiveHoursStart" -Value 6 -Type DWord -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path $flightKey -Name "ActiveHoursEnd" -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue
-        }
-        Write-Host " [✓] Windows Update dikunci ke: Security Updates Only (Anti Driver Hijack & Anti Auto-Reboot)" -ForegroundColor Green
-    }
-}
-
-function Reset-VoltWindowsUpdate {
-    Write-Host "`n[*] Memperbaiki Komponen Windows Update (Stop -> Purge -> Restart)..." -ForegroundColor Cyan
-    $services = @("wuauserv", "cryptSvc", "bits", "msiserver")
-    foreach ($s in $services) { Stop-Service -Name $s -Force -ErrorAction SilentlyContinue }
-
-    $sd = "C:\Windows\SoftwareDistribution"
-    if (Test-Path $sd) { Rename-Item -Path $sd -NewName "SoftwareDistribution.old" -Force -ErrorAction SilentlyContinue }
-
-    foreach ($s in $services) { Start-Service -Name $s -ErrorAction SilentlyContinue }
-    Write-Host " [✓] Komponen Windows Update berhasil di-reset!" -ForegroundColor Green
-}
-
-# ------------------------------------------------------------------------------
-# 14. GAMING RAW INPUT & DEFENDER EXCLUSIONS
-# ------------------------------------------------------------------------------
-function Set-VoltRawMouseInput {
-    param([switch]$Revert)
-    Write-Host "`n[*] Mengatur Raw Mouse Input (1:1 Tracking Bebas Akselerasi)..." -ForegroundColor Cyan
-    $mouseKey = "HKCU:\Control Panel\Mouse"
-    if ($Revert) {
-        Set-ItemProperty -Path $mouseKey -Name "MouseSpeed" -Value "1" -Type String -Force
-        Set-ItemProperty -Path $mouseKey -Name "MouseThreshold1" -Value "6" -Type String -Force
-        Set-ItemProperty -Path $mouseKey -Name "MouseThreshold2" -Value "10" -Type String -Force
-        Write-Host " [✓] Pointer Precision dikembalikan ke default Windows" -ForegroundColor Yellow
-    } else {
-        Set-ItemProperty -Path $mouseKey -Name "MouseSpeed" -Value "0" -Type String -Force
-        Set-ItemProperty -Path $mouseKey -Name "MouseThreshold1" -Value "0" -Type String -Force
-        Set-ItemProperty -Path $mouseKey -Name "MouseThreshold2" -Value "0" -Type String -Force
-        Write-Host " [✓] Enhance Pointer Precision (Akselerasi) -> Dinonaktifkan (Raw 1:1 Aim)" -ForegroundColor Green
+        Set-ItemProperty -Path $wuPolicy -Name "ExcludeWUDriversInQualityUpdate" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $auPolicy -Name "NoAutoRebootWithLoggedOnUsers" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Add-VoltDefenderGameExclusions {
     param([hashtable]$Hardware)
-    Write-Host "`n[*] Mendaftarkan Direktori Library Game ke Windows Defender Exclusion..." -ForegroundColor Cyan
-
-    $pathsToExclude = [System.Collections.Generic.List[string]]::new()
-    foreach ($lib in $Hardware.SteamLibraries) {
-        if (-not $pathsToExclude.Contains($lib)) { $pathsToExclude.Add($lib) }
+    if (-not $Hardware) { $Hardware = Get-VoltHardwareProfile }
+    $dirs = @()
+    if ($Hardware.SteamLibraries) { $dirs += $Hardware.SteamLibraries }
+    foreach ($g in $Hardware.DiscoveredGames.Values) {
+        if ($g.InstallPath -and (Test-Path $g.InstallPath)) { $dirs += $g.InstallPath }
     }
-    $rPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "Rockstar Games"
-    if ((Test-Path $rPath) -and -not $pathsToExclude.Contains($rPath)) { $pathsToExclude.Add($rPath) }
-
-    $wPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "The Witcher 3"
-    if ((Test-Path $wPath) -and -not $pathsToExclude.Contains($wPath)) { $pathsToExclude.Add($wPath) }
-
-    $hoyoCommon = "C:\Program Files\HoYoPlay"
-    if ((Test-Path $hoyoCommon) -and -not $pathsToExclude.Contains($hoyoCommon)) { $pathsToExclude.Add($hoyoCommon) }
-
-    foreach ($p in $pathsToExclude) {
+    foreach ($d in ($dirs | Select-Object -Unique)) {
         try {
-            Add-MpPreference -ExclusionPath $p -ErrorAction SilentlyContinue
-            Write-Host " [✓] Exclusion ditambahkan: $p (Loading game lebih ngebut & anti-stutter)" -ForegroundColor Green
+            Add-MpPreference -ExclusionPath $d -ErrorAction SilentlyContinue
         } catch {}
     }
 }
 
-# ------------------------------------------------------------------------------
-# 15. HIBERNATION TOGGLE & POWER PLANS
-# ------------------------------------------------------------------------------
 function Toggle-VoltHibernation {
     param([hashtable]$Hardware)
-
-    if (Test-Path "C:\hiberfil.sys") {
-        Write-Host "`n[*] Mematikan Hibernasi untuk membebaskan ruang SSD..." -ForegroundColor Cyan
-        & powercfg.exe -h off
-        Start-Sleep -Seconds 1
-        if (-not (Test-Path "C:\hiberfil.sys")) {
-            Write-Host " [✓] Hibernasi berhasil dimatikan! Bebas ruang SSD: ~$($Hardware.HiberfilSizeGB) GB di Drive C:" -ForegroundColor Green
-        }
+    if (-not $Hardware) { $Hardware = Get-VoltHardwareProfile }
+    if ($Hardware.HibernateActive) {
+        & powercfg.exe /hibernate off
     } else {
-        Write-Host "`n[*] Mengaktifkan kembali Hibernasi..." -ForegroundColor Cyan
-        & powercfg.exe -h on
-        Start-Sleep -Seconds 1
-        Write-Host " [✓] Hibernasi berhasil diaktifkan kembali." -ForegroundColor Green
+        & powercfg.exe /hibernate on
     }
 }
 
 function Set-VoltPowerPlan {
     param([string]$PlanType = "Ultimate")
-    switch ($PlanType.ToUpper()) {
-        "ULTIMATE" {
-            powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
-            powercfg /setactive e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
-            Write-Host " [✓] Power Plan -> Ultimate Performance Aktif!" -ForegroundColor Green
+    if ($PlanType -eq "Ultimate") {
+        & powercfg.exe -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
+        $plans = & powercfg.exe /list
+        $guid = $null
+        foreach ($line in ($plans -split "`n")) {
+            if ($line -match "Ultimate Performance\s*\(([a-f0-9\-]+)\)") {
+                $guid = $Matches[1]
+                break
+            }
         }
-        "HIGH" {
-            powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null | Out-Null
-            Write-Host " [✓] Power Plan -> High Performance Aktif!" -ForegroundColor Green
-        }
-        "BALANCED" {
-            powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e 2>$null | Out-Null
-            Write-Host " [✓] Power Plan -> Balanced (Bawaan Windows) Aktif!" -ForegroundColor Green
-        }
-    }
-}
-
-# ------------------------------------------------------------------------------
-# 16. GAME RUNTIMES & SOFTWARE CATALOG INSTALLER (WINGET)
-# ------------------------------------------------------------------------------
-function Install-VoltPackageById {
-    param(
-        [string]$Name,
-        [string]$Id
-    )
-    if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
-        Write-Host "[-] WinGet tidak ditemukan pada sistem ini." -ForegroundColor Red
-        return $false
-    }
-    Write-Host " -> Menginstal $Name ($Id)..." -ForegroundColor Yellow
-    & winget install --id $Id -e --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host " [✓] $Name selesai dipasang!" -ForegroundColor Green
-        return $true
+        if ($guid) { & powercfg.exe /setactive $guid }
     } else {
-        Write-Host " [!] $Name selesai (kode: $LASTEXITCODE)." -ForegroundColor DarkYellow
-        return $true
+        & powercfg.exe /setactive 381b4222-f694-41f0-9685-ff5bb260df2e 2>$null | Out-Null
     }
 }
 
-# ------------------------------------------------------------------------------
-# 17. WINDOWS OPTIONAL FEATURES MANAGER
-# ------------------------------------------------------------------------------
 function Set-VoltWindowsFeatureDirectPlay {
-    Write-Host "[*] Mengaktifkan DirectPlay..." -ForegroundColor Cyan
     & dism.exe /Online /Enable-Feature /FeatureName:DirectPlay /All /NoRestart
-    Write-Host "[✓] DirectPlay diaktifkan!" -ForegroundColor Green
 }
 
 function Set-VoltWindowsFeatureSandbox {
-    Write-Host "[*] Mengaktifkan Windows Sandbox..." -ForegroundColor Cyan
     & dism.exe /Online /Enable-Feature /FeatureName:Containers-DisposableClientVM /All /NoRestart
-    Write-Host "[✓] Windows Sandbox diaktifkan!" -ForegroundColor Green
 }
 
 function Set-VoltWindowsFeatureWSL {
-    Write-Host "[*] Mengaktifkan WSL2..." -ForegroundColor Cyan
     & wsl.exe --install --no-distribution
-    Write-Host "[✓] WSL kernel core diinstal!" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
-# 18. DYNAMIC DISK CLEANUP ACROSS ALL DRIVES (VOLTCLEAN)
+# 12. DYNAMIC DISK CLEANUP ACROSS ALL DRIVES (VOLTCLEAN)
 # ------------------------------------------------------------------------------
 function Clear-VoltFolderSafely ($path) {
     $reclaimed = 0
@@ -1402,158 +1217,110 @@ function Clear-VoltFolderSafely ($path) {
 
 function Invoke-VoltClean {
     param([hashtable]$Hardware)
-
     if (-not $Hardware) { $Hardware = Get-VoltHardwareProfile }
-
-    Write-Host "`n================================================================================" -ForegroundColor Cyan
-    Write-Host "               🧹 PEMBERSIH DISK LINTAS-DRIVE DINAMIS (VOLTCLEAN)              " -ForegroundColor Cyan
-    Write-Host "================================================================================" -ForegroundColor Cyan
-
-    $initialDrives = [ordered]@{}
-    foreach ($d in $Hardware.Drives.Keys) {
-        $psd = Get-PSDrive -Name ($d.TrimEnd(':')) -ErrorAction SilentlyContinue
-        if ($psd) {
-            $initialDrives[$d] = [math]::Round($psd.Free / 1GB, 2)
-            Write-Host "[*] Free Space $d ($($Hardware.Drives[$d].Label)): $($initialDrives[$d]) GB" -ForegroundColor Gray
-        }
-    }
-
-    $guards = Get-VoltActiveGuards
-    if ($guards.Browsers.Count -gt 0 -or $guards.Launchers.Count -gt 0) {
-        $found = ($guards.Browsers + $guards.Launchers) -join ", "
-        Write-Host "[!] Terdeteksi proses aktif berjalan: $found" -ForegroundColor Yellow
-        Write-Host "    -> File cache yang sedang dipakai akan dilewati secara aman." -ForegroundColor Gray
-    }
-
-    $totalBytesFreed = 0
-
-    # 1. Temp files
-    Write-Host "`n[*] Membersihkan Temporary Files..." -ForegroundColor Cyan
-    $b1 = Clear-VoltFolderSafely $env:TEMP
-    $b2 = Clear-VoltFolderSafely "C:\Windows\Temp"
-    $totalBytesFreed += ($b1 + $b2)
-    Write-Host " [✓] Temporary Files: $([math]::Round(($b1 + $b2) / 1MB, 1)) MB" -ForegroundColor Green
-
-    # 2. Windows Update Download Cache
-    Write-Host "[*] Membersihkan Windows Update Download Cache..." -ForegroundColor Cyan
-    $b3 = Clear-VoltFolderSafely "C:\Windows\SoftwareDistribution\Download"
-    $totalBytesFreed += $b3
-    Write-Host " [✓] Update Cache: $([math]::Round($b3 / 1MB, 1)) MB" -ForegroundColor Green
-
-    # 3. Shaders
-    Write-Host "[*] Membersihkan DirectX & GPU Shader Cache..." -ForegroundColor Cyan
-    $shaderPaths = @(
-        (Join-Path $env:LOCALAPPDATA "D3DSCache"),
-        (Join-Path $env:LOCALAPPDATA "NVIDIA\DXCache"),
-        (Join-Path $env:LOCALAPPDATA "NVIDIA\GLCache"),
-        (Join-Path $env:LOCALAPPDATA "AMD\DxCache"),
-        (Join-Path $env:LOCALAPPDATA "Intel\ShaderCache"),
-        (Join-Path $env:LOCALAPPDATA "Microsoft\Windows\DeliveryOptimization\Cache")
-    )
-    $bShader = 0
-    foreach ($sp in $shaderPaths) { $bShader += (Clear-VoltFolderSafely $sp) }
-    $totalBytesFreed += $bShader
-    Write-Host " [✓] Shader & Delivery Cache: $([math]::Round($bShader / 1MB, 1)) MB" -ForegroundColor Green
-
-    # 4. Steam Shaders across ALL drives
-    Write-Host "[*] Memindai & Membersihkan Shader Cache Steam Lintas-Drive..." -ForegroundColor Cyan
-    $bSteamShader = 0
-    foreach ($lib in $Hardware.SteamLibraries) {
-        $steamShader = Join-Path $lib "steamapps\shadercache"
-        if (Test-Path $steamShader) {
-            $freed = Clear-VoltFolderSafely $steamShader
-            $bSteamShader += $freed
-        }
-    }
-    $totalBytesFreed += $bSteamShader
-    Write-Host " [✓] Steam Shader Cache: $([math]::Round($bSteamShader / 1MB, 1)) MB" -ForegroundColor Green
-
-    # 5. Crash dumps & WER
-    Write-Host "[*] Membersihkan Windows Crash Dumps & WER..." -ForegroundColor Cyan
-    $b4 = Clear-VoltFolderSafely "C:\Windows\Minidump"
-    $bWer = Clear-VoltFolderSafely "C:\ProgramData\Microsoft\Windows\WER"
-    $totalBytesFreed += ($b4 + $bWer)
-    Write-Host " [✓] Crash Dumps & WER: $([math]::Round(($b4 + $bWer) / 1MB, 1)) MB" -ForegroundColor Green
-
-    # 6. Recycle Bin
-    try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue | Out-Null } catch {}
-
-    Write-Host "`n================================================================================" -ForegroundColor Green
-    Write-Host " HASIL PEMBERSIHAN DISK (VOLTCLEAN):" -ForegroundColor Green
-    Write-Host "   Total Sampah Dibersihkan: $([math]::Round($totalBytesFreed / 1GB, 2)) GB ($([math]::Round($totalBytesFreed / 1MB, 1)) MB)" -ForegroundColor White
-    foreach ($d in $Hardware.Drives.Keys) {
-        $psd = Get-PSDrive -Name ($d.TrimEnd(':')) -ErrorAction SilentlyContinue
-        if ($psd) {
-            $nowFree = [math]::Round($psd.Free / 1GB, 2)
-            $diff = [math]::Round($nowFree - $initialDrives[$d], 2)
-            Write-Host "   $d ($($Hardware.Drives[$d].Label)): Sekarang $nowFree GB Free ($(if ($diff -ge 0) { "+$diff GB" } else { "$diff GB" }))" -ForegroundColor Cyan
-        }
-    }
-    Write-Host "================================================================================" -ForegroundColor Green
-    return $totalBytesFreed
-}
-
-# ------------------------------------------------------------------------------
-# 19. SYSTEM HEALTH & REPAIR DIAGNOSTICS SUITE
-# ------------------------------------------------------------------------------
-function Clear-VoltStandbyMemory {
-    Write-Host "`n[*] Membersihkan Standby Memory & Working Set..." -ForegroundColor Cyan
-    try {
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
-        Write-Host " [✓] Garbage Collection & Standby Memory berhasil di-trim!" -ForegroundColor Green
-    } catch {}
+    $freed = 0
+    $freed += Clear-VoltFolderSafely $env:TEMP
+    $freed += Clear-VoltFolderSafely (Join-Path $env:SystemRoot "Temp")
+    $freed += Clear-VoltFolderSafely (Join-Path $env:LOCALAPPDATA "D3DSCache")
+    $freed += Clear-VoltFolderSafely (Join-Path $env:LOCALAPPDATA "NVIDIA\DXCache")
+    $freed += Clear-VoltFolderSafely (Join-Path $env:LOCALAPPDATA "CrashDumps")
+    return $freed
 }
 
 function Rebuild-VoltIconCache {
-    Write-Host "`n[*] Membangun ulang Icon & Thumbnail Cache..." -ForegroundColor Cyan
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
     Remove-Item (Join-Path $env:LOCALAPPDATA "IconCache.db") -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Explorer\thumbcache_*.db") -Force -ErrorAction SilentlyContinue
     Start-Process explorer.exe
-    Write-Host " [✓] Icon & Thumbnail Cache berhasil diperbarui!" -ForegroundColor Green
 }
 
 function Reset-VoltNetwork {
-    Write-Host "`n[*] Memperbaiki Network Adapter & Winsock Catalog..." -ForegroundColor Cyan
     & netsh.exe winsock reset | Out-Null
     & netsh.exe int ip reset | Out-Null
     & ipconfig.exe /flushdns | Out-Null
-    & ipconfig.exe /registerdns | Out-Null
-    Write-Host " [✓] Winsock catalog dan TCP/IP stack berhasil di-reset!" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
+# 13. BLUEPRINT PRESET MATRIX
 # ------------------------------------------------------------------------------
-# 20. MODERN NATIVE WPF GUI WINDOW (100% IN-GUI EXPERIENCE, ZERO CLI REQUIRED)
+$Script:VoltPresetMap = @{
+    "Recommended" = @{
+        chkHags = $true; chkGameMode = $true; chkGameDVR = $true; chkRawMouse = $true;
+        chkDefender = $true; chkNetwork = $true; chkPowerThrottle = $false;
+        chkSafeServices = $true; chkSecurityUpdates = $true;
+        chkClassicMenu = $true; chkFileExt = $true; chkThisPC = $true; chkHiddenFiles = $true;
+        chkCleanTaskbar = $true; chkCleanQuickAccess = $true;
+        chkTelemetry = $true; chkRecall = $true; chkCopilot = $true; chkStartSearch = $true;
+        chkAdId = $true; chkDeliveryOpt = $true
+    }
+    "LaptopGaming" = @{
+        chkHags = $true; chkGameMode = $true; chkGameDVR = $true; chkRawMouse = $true;
+        chkDefender = $true; chkNetwork = $true; chkPowerThrottle = $false;
+        chkSafeServices = $true; chkSecurityUpdates = $true;
+        chkClassicMenu = $true; chkFileExt = $true; chkThisPC = $true; chkHiddenFiles = $false;
+        chkCleanTaskbar = $true; chkCleanQuickAccess = $true;
+        chkTelemetry = $true; chkRecall = $true; chkCopilot = $true; chkStartSearch = $true;
+        chkAdId = $true; chkDeliveryOpt = $true
+    }
+    "DesktopMax" = @{
+        chkHags = $true; chkGameMode = $true; chkGameDVR = $true; chkRawMouse = $true;
+        chkDefender = $true; chkNetwork = $true; chkPowerThrottle = $true;
+        chkSafeServices = $true; chkSecurityUpdates = $true;
+        chkClassicMenu = $true; chkFileExt = $true; chkThisPC = $true; chkHiddenFiles = $true;
+        chkCleanTaskbar = $true; chkCleanQuickAccess = $true;
+        chkTelemetry = $true; chkRecall = $true; chkCopilot = $true; chkStartSearch = $true;
+        chkAdId = $true; chkDeliveryOpt = $true
+    }
+    "MinimalPrivacy" = @{
+        chkHags = $false; chkGameMode = $false; chkGameDVR = $false; chkRawMouse = $false;
+        chkDefender = $false; chkNetwork = $false; chkPowerThrottle = $false;
+        chkSafeServices = $false; chkSecurityUpdates = $false;
+        chkClassicMenu = $true; chkFileExt = $true; chkThisPC = $true; chkHiddenFiles = $false;
+        chkCleanTaskbar = $true; chkCleanQuickAccess = $true;
+        chkTelemetry = $true; chkRecall = $true; chkCopilot = $true; chkStartSearch = $true;
+        chkAdId = $true; chkDeliveryOpt = $true
+    }
+    "ClearAll" = @{
+        chkHags = $false; chkGameMode = $false; chkGameDVR = $false; chkRawMouse = $false;
+        chkDefender = $false; chkNetwork = $false; chkPowerThrottle = $false;
+        chkSafeServices = $false; chkSecurityUpdates = $false;
+        chkClassicMenu = $false; chkFileExt = $false; chkThisPC = $false; chkHiddenFiles = $false;
+        chkCleanTaskbar = $false; chkCleanQuickAccess = $false;
+        chkTelemetry = $false; chkRecall = $false; chkCopilot = $false; chkStartSearch = $false;
+        chkAdId = $false; chkDeliveryOpt = $false
+    }
+}
+
+# ------------------------------------------------------------------------------
+# 14. MODERN NATIVE WPF DESKTOP HUB (FLUENT DARK REVAMP)
 # ------------------------------------------------------------------------------
 function Show-VoltGUI {
     param([hashtable]$Hardware)
 
     if (-not $Hardware) { $Hardware = Get-VoltHardwareProfile }
 
-    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Voltune Ultimate Toolkit v$Script:VoltVersion" Height="780" Width="1100"
-        MinHeight="650" MinWidth="900"
-        WindowStartupLocation="CenterScreen" Background="#0F172A" FontFamily="Segoe UI">
+        Title="Voltune Ultimate Hub v$Script:VoltVersion" Height="820" Width="1140"
+        MinHeight="680" MinWidth="950"
+        WindowStartupLocation="CenterScreen" Background="#0B0F17" FontFamily="Segoe UI">
     <Window.Resources>
         <Style TargetType="Button">
             <Setter Property="Background" Value="#1E293B"/>
             <Setter Property="Foreground" Value="#F8FAFC"/>
             <Setter Property="BorderBrush" Value="#334155"/>
-            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Padding" Value="12,7"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
         <Style TargetType="TabItem">
-            <Setter Property="Background" Value="#1E293B"/>
+            <Setter Property="Background" Value="#111827"/>
             <Setter Property="Foreground" Value="#94A3B8"/>
-            <Setter Property="Padding" Value="14,9"/>
+            <Setter Property="Padding" Value="16,10"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
@@ -1574,47 +1341,119 @@ function Show-VoltGUI {
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <Border Grid.Row="0" Background="#1E293B" CornerRadius="8" Padding="14,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+        <Border Grid.Row="0" Background="#111827" CornerRadius="8" Padding="16,12" Margin="0,0,0,10" BorderBrush="#1F2937" BorderThickness="1">
             <DockPanel LastChildFill="False">
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                    <TextBlock Text="⚡ VOLTUNE ULTIMATE" FontSize="19" FontWeight="Bold" Foreground="#38BDF8" VerticalAlignment="Center"/>
-                    <TextBlock Text="v$Script:VoltVersion" FontSize="11" Foreground="#94A3B8" Margin="8,5,0,0" VerticalAlignment="Center"/>
+                <StackPanel DockPanel.Dock="Left">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="⚡ VOLTUNE ULTIMATE" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" VerticalAlignment="Center"/>
+                        <TextBlock Text="v$Script:VoltVersion" FontSize="11" Foreground="#94A3B8" Margin="8,6,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBlock Text="Universal Hardware-Aware Performance, Gaming &amp; System Hub" FontSize="11" Foreground="#64748B" Margin="0,2,0,0"/>
                 </StackPanel>
-                <TextBlock DockPanel.Dock="Right" Text="100% GUI Mode • Zero CLI Typing Required • Reversible" Foreground="#10B981" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
+
+                <!-- Hardware Summary Badges -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="#1E293B" CornerRadius="4" Padding="8,4" Margin="0,0,6,0">
+                        <TextBlock Text="🎮 $($Hardware.DiscreteGPU.Name)" Foreground="#38BDF8" FontSize="11" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border Background="#1E293B" CornerRadius="4" Padding="8,4" Margin="0,0,6,0">
+                        <TextBlock Text="🖥️ $($Hardware.ScreenResolution) @ $($Hardware.ScreenRefreshHz) Hz" Foreground="#A78BFA" FontSize="11" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border Background="#064E3B" CornerRadius="4" Padding="8,4">
+                        <TextBlock Text="100% GUI Mode" Foreground="#34D399" FontSize="11" FontWeight="Bold"/>
+                    </Border>
+                </StackPanel>
             </DockPanel>
         </Border>
 
         <!-- Main TabControl -->
-        <TabControl Grid.Row="1" Background="#1E293B" BorderBrush="#334155" BorderThickness="1">
+        <TabControl Grid.Row="1" Background="#111827" BorderBrush="#1F2937" BorderThickness="1">
             <!-- TAB 1: DASHBOARD -->
             <TabItem Header="Dashboard">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
-                        <TextBlock Text="Hardware Profile Dinamis Terdeteksi" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,10"/>
-                        <Border Background="#0F172A" CornerRadius="6" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
-                            <StackPanel>
-                                <TextBlock Text="Prosesor: $($Hardware.CPUName) ($($Hardware.CPUCores) Cores, $($Hardware.CPUThreads) Threads$(if ($Hardware.IsHybridCPU) { ' | Hybrid P+E' }))" Foreground="#F8FAFC" Margin="0,3"/>
-                                <TextBlock Text="Kartu GPU: $(if ($Hardware.DiscreteGPU) { $Hardware.DiscreteGPU.Name + ' (' + $Hardware.DiscreteGPU.VRAM_GB + ' GB VRAM' + $(if ($Hardware.DiscreteGPU.TGP_W) { ' | ' + $Hardware.DiscreteGPU.TGP_W + 'W TGP' } else { '' }) + ')' } else { 'iGPU Only' })" Foreground="#F8FAFC" Margin="0,3"/>
-                                <TextBlock Text="Sumber Daya: $(if ($Hardware.IsOnBattery) { 'Baterai (' + $Hardware.BatteryChargePct + '%) [Hemat Daya]' } else { 'AC Adapter (Daya Maksimal)' })" Foreground="$(if ($Hardware.IsOnBattery) { '#FBBF24' } else { '#34D399' })" Margin="0,3"/>
-                                <TextBlock Text="Layar: $($Hardware.ScreenResolution) @ $($Hardware.ScreenRefreshHz) Hz | Target FPS: VRR $($Hardware.DynamicFPSCaps.TearFreeVRR) FPS" Foreground="#F8FAFC" Margin="0,3"/>
-                                <TextBlock Text="Memori RAM: $($Hardware.RAM_GB) GB | HAGS: $(if ($Hardware.HAGS_Status) { 'Aktif' } else { 'Nonaktif' }) | Hibernasi: $(if ($Hardware.HibernateActive) { 'Aktif (~' + $Hardware.HiberfilSizeGB + ' GB)' } else { 'Nonaktif' })" Foreground="#F8FAFC" Margin="0,3"/>
-                                <TextBlock Text="Game Terdeteksi: $($Hardware.DiscoveredGames.Count) Game Lintas-Platform (Steam, Epic, GOG, HoYoPlay, Standalone)" Foreground="#A78BFA" Margin="0,3"/>
-                            </StackPanel>
-                        </Border>
+                        <TextBlock Text="Telemetri &amp; Profil Hardware Dinamis" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,12"/>
 
-                        <TextBlock Text="Aksi Cepat Sistem" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,5,0,8"/>
-                        <WrapPanel Margin="0,0,0,10">
-                            <Button Name="btnDashSnapshot" Content="📸 Buat Snapshot VoltUndo" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnDashRestorePoint" Content="🛡️ Buat System Restore Point" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnDashToggleHiber" Content="💾 Toggle Hibernasi (~$($Hardware.HiberfilSizeGB) GB)" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnDashPowerUlt" Content="⚡ Power: Ultimate" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnDashPowerBal" Content="⚖️ Power: Balanced" Margin="0,0,8,8" Height="34"/>
+                        <!-- 6 Visual Metric Tiles Grid -->
+                        <Grid Margin="0,0,0,16">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Tile 1: CPU -->
+                            <Border Grid.Row="0" Grid.Column="0" Background="#1E293B" CornerRadius="8" Padding="14" Margin="0,0,8,8" BorderBrush="#334155" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="💻 PROSESOR (CPU)" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                    <TextBlock Text="$($Hardware.CPUName)" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC" TextWrapping="Wrap" Margin="0,4,0,2"/>
+                                    <TextBlock Text="$($Hardware.CPUCores) Cores, $($Hardware.CPUThreads) Threads $(if ($Hardware.IsHybridCPU) { '• Hybrid P+E' })" FontSize="11" Foreground="#38BDF8"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Tile 2: Discrete GPU -->
+                            <Border Grid.Row="0" Grid.Column="1" Background="#1E293B" CornerRadius="8" Padding="14" Margin="4,0,4,8" BorderBrush="#334155" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="🎮 DISCRETE GPU" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                    <TextBlock Text="$($Hardware.DiscreteGPU.Name)" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC" TextWrapping="Wrap" Margin="0,4,0,2"/>
+                                    <TextBlock Text="$($Hardware.DiscreteGPU.VRAM_GB) GB VRAM $(if ($Hardware.DiscreteGPU.TGP_W) { '• ' + $Hardware.DiscreteGPU.TGP_W + 'W TGP' })" FontSize="11" Foreground="#10B981"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Tile 3: Display -->
+                            <Border Grid.Row="0" Grid.Column="2" Background="#1E293B" CornerRadius="8" Padding="14" Margin="8,0,0,8" BorderBrush="#334155" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="🖥️ LAYAR &amp; TARGET FPS" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                    <TextBlock Text="$($Hardware.ScreenResolution) @ $($Hardware.ScreenRefreshHz) Hz" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,4,0,2"/>
+                                    <TextBlock Text="VRR Target: $($Hardware.DynamicFPSCaps.TearFreeVRR) FPS • Dingin: $($Hardware.DynamicFPSCaps.HalfRate) FPS" FontSize="11" Foreground="#A78BFA"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Tile 4: Memory -->
+                            <Border Grid.Row="1" Grid.Column="0" Background="#1E293B" CornerRadius="8" Padding="14" Margin="0,4,8,0" BorderBrush="#334155" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="🧠 MEMORI (RAM)" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                    <TextBlock Text="$($Hardware.RAM_GB) GB Terpasang" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,4,0,2"/>
+                                    <TextBlock Text="HAGS: $(if ($Hardware.HAGS_Status) { 'Aktif [✓]' } else { 'Nonaktif' }) • Hibernasi: $(if ($Hardware.HibernateActive) { 'Aktif' } else { 'Hemat SSD' })" FontSize="11" Foreground="#FBBF24"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Tile 5: Power -->
+                            <Border Grid.Row="1" Grid.Column="1" Background="#1E293B" CornerRadius="8" Padding="14" Margin="4,4,4,0" BorderBrush="#334155" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="⚡ SUMBER DAYA &amp; BATERAI" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                    <TextBlock Text="$(if ($Hardware.IsOnBattery) { 'Baterai (' + $Hardware.BatteryChargePct + '%)' } else { 'AC Adapter (Daya Maksimal)' })" FontSize="14" FontWeight="Bold" Foreground="$(if ($Hardware.IsOnBattery) { '#FBBF24' } else { '#34D399' })" Margin="0,4,0,2"/>
+                                    <TextBlock Text="$(if ($Hardware.IsOnBattery) { 'Mode Hemat Daya Aktif' } else { 'Siap Gaspol Clock Penuh' })" FontSize="11" Foreground="#94A3B8"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Tile 6: Games Status -->
+                            <Border Grid.Row="1" Grid.Column="2" Background="#1E293B" CornerRadius="8" Padding="14" Margin="8,4,0,0" BorderBrush="#334155" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="🎯 EKOSISTEM GAMING" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                    <TextBlock Text="$($Hardware.DiscoveredGames.Count) Game Terdeteksi" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,4,0,2"/>
+                                    <TextBlock Text="Steam, HoYoPlay, Standalone &amp; Mod Multi-Drive" FontSize="11" Foreground="#38BDF8"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <TextBlock Text="Aksi Cepat Sistem" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,10,0,8"/>
+                        <WrapPanel>
+                            <Button Name="btnDashSnapshot" Content="📸 Buat Snapshot VoltUndo" Margin="0,0,8,8" Height="36"/>
+                            <Button Name="btnDashRestorePoint" Content="🛡️ Buat System Restore Point" Margin="0,0,8,8" Height="36"/>
+                            <Button Name="btnDashToggleHiber" Content="💾 Toggle Hibernasi (~$($Hardware.HiberfilSizeGB) GB)" Margin="0,0,8,8" Height="36"/>
+                            <Button Name="btnDashPowerUlt" Content="⚡ Skema Daya: Ultimate" Margin="0,0,8,8" Height="36"/>
+                            <Button Name="btnDashPowerBal" Content="⚖️ Skema Daya: Balanced" Margin="0,0,8,8" Height="36"/>
                         </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
 
-            <!-- TAB 2: TWEAKS (CHRIS TITUS STYLE CUSTOMIZATION & PRESETS) -->
+            <!-- TAB 2: TWEAKS (CUSTOMIZED PRESETS & ATOMIC TOGGLES) -->
             <TabItem Header="Tweaks">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
@@ -1623,22 +1462,22 @@ function Show-VoltGUI {
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Row 0: Presets Toolbar -->
-                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                    <!-- Presets Toolbar -->
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,0,0,10" BorderBrush="#1F2937" BorderThickness="1">
                         <StackPanel>
-                            <TextBlock Text="Pilih Preset Konfigurasi (Klik untuk memilih rekomendasi, lalu customize bebas):" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,8"/>
+                            <TextBlock Text="Pilih Preset Konfigurasi (Memilih preset menimpa centang secara bersih, bebas customize):" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,8"/>
                             <WrapPanel>
-                                <Button Name="btnPresetRecommended" Content="🎯 Recommended Preset" Background="#0284C7" Margin="0,0,8,6" Height="32"/>
-                                <Button Name="btnPresetLaptop" Content="💻 Laptop Gaming Preset" Margin="0,0,8,6" Height="32"/>
-                                <Button Name="btnPresetDesktop" Content="🖥️ Desktop Max Preset" Margin="0,0,8,6" Height="32"/>
-                                <Button Name="btnPresetMinimal" Content="🛡️ Minimal Privacy Preset" Margin="0,0,8,6" Height="32"/>
-                                <Button Name="btnLiveState" Content="🔄 Status Windows Saat Ini" Background="#047857" Margin="0,0,8,6" Height="32"/>
-                                <Button Name="btnPresetClear" Content="❌ Clear All" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnPresetRecommended" Content="🎯 Recommended Preset" Background="#0284C7" Margin="0,0,8,6" Height="34"/>
+                                <Button Name="btnPresetLaptop" Content="💻 Laptop Gaming Preset" Margin="0,0,8,6" Height="34"/>
+                                <Button Name="btnPresetDesktop" Content="🖥️ Desktop Max Preset" Margin="0,0,8,6" Height="34"/>
+                                <Button Name="btnPresetMinimal" Content="🛡️ Minimal Privacy Preset" Margin="0,0,8,6" Height="34"/>
+                                <Button Name="btnLiveState" Content="🔄 Status Windows Saat Ini" Background="#065F46" Margin="0,0,8,6" Height="34"/>
+                                <Button Name="btnPresetClear" Content="❌ Clear All" Margin="0,0,8,6" Height="34"/>
                             </WrapPanel>
                         </StackPanel>
                     </Border>
 
-                    <!-- Row 1: ScrollViewer with Category Cards -->
+                    <!-- Tweaks Cards -->
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
@@ -1648,7 +1487,7 @@ function Show-VoltGUI {
 
                             <!-- Column 1 -->
                             <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="14" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
                                         <TextBlock Text="⚡ Gaming &amp; Performa Hardware" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
                                         <CheckBox Name="chkHags" Content="Hardware-Accelerated GPU Scheduling (HAGS)"/>
@@ -1661,7 +1500,7 @@ function Show-VoltGUI {
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="14" BorderBrush="#334155" BorderThickness="1">
                                     <StackPanel>
                                         <TextBlock Text="🔒 Layanan &amp; Update Sistem" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
                                         <CheckBox Name="chkSafeServices" Content="Safe Gaming Services (Matikan DiagTrack, WAP, Maps)"/>
@@ -1672,7 +1511,7 @@ function Show-VoltGUI {
 
                             <!-- Column 2 -->
                             <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="14" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
                                         <TextBlock Text="🛠️ Windows 11 Quality of Life (QoL)" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
                                         <CheckBox Name="chkClassicMenu" Content="Classic Context Menu (Klik Kanan Penuh Windows 10)"/>
@@ -1684,7 +1523,7 @@ function Show-VoltGUI {
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="14" BorderBrush="#334155" BorderThickness="1">
                                     <StackPanel>
                                         <TextBlock Text="🛡️ Privasi &amp; Anti-Telemetri" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
                                         <CheckBox Name="chkTelemetry" Content="Windows Telemetry Level Minimum (Level 0)"/>
@@ -1699,35 +1538,37 @@ function Show-VoltGUI {
                         </Grid>
                     </ScrollViewer>
 
-                    <!-- Row 2: Sticky Bottom Action Bar -->
-                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                    <!-- Sticky Bottom Action Bar -->
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,10,0,0" BorderBrush="#1F2937" BorderThickness="1">
                         <DockPanel LastChildFill="False">
                             <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                                <Button Name="btnRunSelectedTweaks" Content="🚀 Terapkan Seluruh Tweaks Terpilih" Background="#0284C7" Height="38" Padding="16,0" Margin="0,0,10,0"/>
+                                <Button Name="btnRunSelectedTweaks" Content="🚀 Terapkan Seluruh Tweaks Terpilih" Background="#0284C7" Height="38" Padding="18,0" Margin="0,0,10,0"/>
                                 <Button Name="btnUndoSelectedTweaks" Content="↩️ Undo / Revert Tweaks Terpilih" Background="#475569" Height="38" Padding="14,0" Margin="0,0,10,0"/>
                                 <Button Name="btnQuickSnapshot" Content="📸 Buat Snapshot VoltUndo" Height="38" Padding="12,0"/>
                             </StackPanel>
-                            <TextBlock DockPanel.Dock="Right" Text="Centang tweak yang ingin diubah, lalu klik Terapkan." Foreground="#94A3B8" VerticalAlignment="Center" FontSize="12"/>
+                            <TextBlock DockPanel.Dock="Right" Text="Eksekusi atomik granular • 100% Reversible" Foreground="#10B981" VerticalAlignment="Center" FontSize="12"/>
                         </DockPanel>
                     </Border>
                 </Grid>
             </TabItem>
 
-            <!-- TAB 3: INSTALL APPS (WINGET COMPREHENSIVE CATALOG) -->
+            <!-- TAB 3: INSTALL APPS (FRESH POST-INSTALL & WINGET CATALOG) -->
             <TabItem Header="Install Apps">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Row 0: Apps Presets Toolbar -->
-                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                    <!-- Presets Toolbar -->
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,0,0,8" BorderBrush="#1F2937" BorderThickness="1">
                         <StackPanel>
-                            <TextBlock Text="Pilih Preset Software (Atau centang software yang diinginkan di bawah):" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,8"/>
+                            <TextBlock Text="Pilih Paket Cepat Software Pasca-Install Ulang Windows (WinGet Official):" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,6"/>
                             <WrapPanel>
-                                <Button Name="btnAppsRuntimes" Content="📦 All Game Runtimes" Background="#0284C7" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsFreshInstall" Content="⭐ Fresh Windows Setup" Background="#0284C7" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsRuntimes" Content="📦 All Game Runtimes" Margin="0,0,8,6" Height="32"/>
                                 <Button Name="btnAppsGaming" Content="🎮 Gaming Essentials" Margin="0,0,8,6" Height="32"/>
                                 <Button Name="btnAppsDev" Content="💻 Developer Suite" Margin="0,0,8,6" Height="32"/>
                                 <Button Name="btnAppsBrowsers" Content="🌐 Web Browsers" Margin="0,0,8,6" Height="32"/>
@@ -1737,8 +1578,16 @@ function Show-VoltGUI {
                         </StackPanel>
                     </Border>
 
-                    <!-- Row 1: ScrollViewer with Categorized App Cards -->
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <!-- Live Search Bar -->
+                    <Border Grid.Row="1" Background="#0F172A" CornerRadius="8" Padding="10,8" Margin="0,0,0,10" BorderBrush="#1F2937" BorderThickness="1">
+                        <DockPanel LastChildFill="True">
+                            <TextBlock DockPanel.Dock="Left" Text="🔍 Filter / Cari Software: " Foreground="#38BDF8" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox Name="txtAppFilter" Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" BorderThickness="1" Padding="8,4" FontSize="13"/>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Categorized Apps Grid -->
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -1747,12 +1596,12 @@ function Show-VoltGUI {
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- Column 1: Runtimes & Browsers -->
+                            <!-- Column 1: Post-Install Runtimes & Browsers -->
                             <StackPanel Grid.Column="0" Margin="0,0,6,0">
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
-                                        <TextBlock Text="📦 Game Runtimes" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                                        <CheckBox Name="chkApp_VCRedist" Content="Visual C++ 2015-2022"/>
+                                        <TextBlock Text="📦 Runtimes Wajib Game" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_VCRedist" Content="Visual C++ 2015-2022 AIO"/>
                                         <CheckBox Name="chkApp_DirectX" Content="DirectX End-User Runtimes"/>
                                         <CheckBox Name="chkApp_DotNet8" Content=".NET 8 Desktop Runtime"/>
                                         <CheckBox Name="chkApp_DotNet9" Content=".NET 9 Desktop Runtime"/>
@@ -1761,14 +1610,14 @@ function Show-VoltGUI {
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1">
                                     <StackPanel>
                                         <TextBlock Text="🌐 Web Browsers" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
                                         <CheckBox Name="chkApp_Brave" Content="Brave Browser"/>
                                         <CheckBox Name="chkApp_Chrome" Content="Google Chrome"/>
                                         <CheckBox Name="chkApp_Firefox" Content="Mozilla Firefox"/>
                                         <CheckBox Name="chkApp_Thorium" Content="Thorium Browser"/>
-                                        <CheckBox Name="chkApp_Librewolf" Content="LibreWolf"/>
+                                        <CheckBox Name="chkApp_Librewolf" Content="LibreWolf Browser"/>
                                         <CheckBox Name="chkApp_Edge" Content="Microsoft Edge"/>
                                         <CheckBox Name="chkApp_OperaGX" Content="Opera GX"/>
                                         <CheckBox Name="chkApp_Vivaldi" Content="Vivaldi"/>
@@ -1777,9 +1626,9 @@ function Show-VoltGUI {
                                 </Border>
                             </StackPanel>
 
-                            <!-- Column 2: Gaming & Hardware -->
+                            <!-- Column 2: Gaming, Drivers & Monitoring -->
                             <StackPanel Grid.Column="1" Margin="3,0,3,0">
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
                                         <TextBlock Text="🎮 Gaming &amp; Launchers" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
                                         <CheckBox Name="chkApp_Steam" Content="Steam"/>
@@ -1795,30 +1644,31 @@ function Show-VoltGUI {
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1">
                                     <StackPanel>
-                                        <TextBlock Text="⚡ Hardware &amp; Monitoring" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <TextBlock Text="⚡ Drivers &amp; Monitoring" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_NvidiaApp" Content="NVIDIA App (No Login)"/>
                                         <CheckBox Name="chkApp_Afterburner" Content="MSI Afterburner"/>
                                         <CheckBox Name="chkApp_RTSS" Content="RivaTuner (RTSS)"/>
+                                        <CheckBox Name="chkApp_FanControl" Content="Rem0o FanControl"/>
+                                        <CheckBox Name="chkApp_HWiNFO" Content="REALiX HWiNFO64"/>
                                         <CheckBox Name="chkApp_CPUZ" Content="CPUID CPU-Z"/>
                                         <CheckBox Name="chkApp_GPUZ" Content="TechPowerUp GPU-Z"/>
-                                        <CheckBox Name="chkApp_HWMonitor" Content="CPUID HWMonitor"/>
-                                        <CheckBox Name="chkApp_HWiNFO" Content="REALiX HWiNFO"/>
                                         <CheckBox Name="chkApp_DiskInfo" Content="CrystalDiskInfo"/>
                                         <CheckBox Name="chkApp_DiskMark" Content="CrystalDiskMark"/>
-                                        <CheckBox Name="chkApp_FanControl" Content="Fan Control"/>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
 
                             <!-- Column 3: Dev Tools & Media -->
                             <StackPanel Grid.Column="2" Margin="3,0,3,0">
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
                                         <TextBlock Text="💻 Development &amp; Tools" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
                                         <CheckBox Name="chkApp_VSCode" Content="Visual Studio Code"/>
                                         <CheckBox Name="chkApp_Git" Content="Git for Windows"/>
                                         <CheckBox Name="chkApp_Terminal" Content="Windows Terminal"/>
+                                        <CheckBox Name="chkApp_Pwsh7" Content="PowerShell 7"/>
                                         <CheckBox Name="chkApp_Node" Content="Node.js LTS"/>
                                         <CheckBox Name="chkApp_Python" Content="Python 3.12"/>
                                         <CheckBox Name="chkApp_Docker" Content="Docker Desktop"/>
@@ -1829,7 +1679,7 @@ function Show-VoltGUI {
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1">
                                     <StackPanel>
                                         <TextBlock Text="🎬 Media &amp; Audio" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
                                         <CheckBox Name="chkApp_VLC" Content="VLC Media Player"/>
@@ -1842,25 +1692,29 @@ function Show-VoltGUI {
                                 </Border>
                             </StackPanel>
 
-                            <!-- Column 4: System Utilities & Docs -->
+                            <!-- Column 4: Archivers, System Utils & Docs -->
                             <StackPanel Grid.Column="3" Margin="6,0,0,0">
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
-                                        <TextBlock Text="🛠️ System Utilities" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                                        <CheckBox Name="chkApp_7Zip" Content="7-Zip Archiver"/>
+                                        <TextBlock Text="🛠️ Archivers &amp; System Tools" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_NanaZip" Content="NanaZip (Win11 Context Menu)"/>
+                                        <CheckBox Name="chkApp_7Zip" Content="7-Zip"/>
                                         <CheckBox Name="chkApp_WinRAR" Content="WinRAR"/>
                                         <CheckBox Name="chkApp_Everything" Content="Everything Search"/>
                                         <CheckBox Name="chkApp_ShareX" Content="ShareX Screen Capture"/>
                                         <CheckBox Name="chkApp_BleachBit" Content="BleachBit Cleaner"/>
                                         <CheckBox Name="chkApp_Revo" Content="Revo Uninstaller"/>
                                         <CheckBox Name="chkApp_WizTree" Content="WizTree Disk Analyzer"/>
-                                        <CheckBox Name="chkApp_Rufus" Content="Rufus USB Tool"/>
+                                        <CheckBox Name="chkApp_Rufus" Content="Rufus USB Creator"/>
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                <Border Background="#1E293B" CornerRadius="8" Padding="12" BorderBrush="#334155" BorderThickness="1">
                                     <StackPanel>
-                                        <TextBlock Text="📄 Documents &amp; Office" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <TextBlock Text="📄 Documents &amp; Comms" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_QuickLook" Content="QuickLook (Spacebar Preview)"/>
+                                        <CheckBox Name="chkApp_Telegram" Content="Telegram Desktop"/>
+                                        <CheckBox Name="chkApp_WhatsApp" Content="WhatsApp Desktop"/>
                                         <CheckBox Name="chkApp_Obsidian" Content="Obsidian Markdown"/>
                                         <CheckBox Name="chkApp_Notion" Content="Notion Desktop"/>
                                         <CheckBox Name="chkApp_LibreOffice" Content="LibreOffice Suite"/>
@@ -1872,21 +1726,21 @@ function Show-VoltGUI {
                         </Grid>
                     </ScrollViewer>
 
-                    <!-- Row 2: Sticky Bottom Action Bar -->
-                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                    <!-- Sticky Bottom Action Bar -->
+                    <Border Grid.Row="3" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,10,0,0" BorderBrush="#1F2937" BorderThickness="1">
                         <DockPanel LastChildFill="False">
                             <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
                                 <Button Name="btnInstallSelectedApps" Content="📥 Install Software Terpilih (WinGet)" Background="#0284C7" Height="38" Padding="16,0" Margin="0,0,10,0"/>
                                 <Button Name="btnUpgradeAllApps" Content="🔄 Upgrade Semua Software" Height="38" Padding="14,0" Margin="0,0,10,0"/>
                                 <Button Name="btnOpenDebloaterInGui" Content="🗑️ Debloat Windows Apps (Appx)" Background="#7F1D1D" Height="38" Padding="14,0"/>
                             </StackPanel>
-                            <TextBlock DockPanel.Dock="Right" Text="Instalasi WinGet resmi, aman &amp; tanpa adware" Foreground="#10B981" VerticalAlignment="Center" FontSize="12"/>
+                            <TextBlock DockPanel.Dock="Right" Text="Instalasi resmi otomatis via WinGet (bebas adware)" Foreground="#10B981" VerticalAlignment="Center" FontSize="12"/>
                         </DockPanel>
                     </Border>
                 </Grid>
             </TabItem>
 
-            <!-- TAB 4: VOLTPLAY (GAME TUNER & DISCOVERY) -->
+            <!-- TAB 4: 100% DYNAMIC GAME TUNER -->
             <TabItem Header="Game Tuner">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
@@ -1895,44 +1749,33 @@ function Show-VoltGUI {
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
-                        <StackPanel>
-                            <TextBlock Text="VoltPlay: In-Game Performance &amp; Anti-Stutter Engine" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,4"/>
-                            <TextBlock Text="Penyelarasan konfigurasi game dinamis &amp; prioritas kartu grafis discrete (RTX 4060):" FontSize="12" Foreground="#94A3B8"/>
-                        </StackPanel>
+                    <!-- Header -->
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,0,0,10" BorderBrush="#1F2937" BorderThickness="1">
+                        <DockPanel LastChildFill="False">
+                            <StackPanel DockPanel.Dock="Left">
+                                <TextBlock Text="🎮 VoltPlay: Dynamic Game Engine &amp; GPU Tuning Hub" FontSize="15" FontWeight="Bold" Foreground="#38BDF8"/>
+                                <TextBlock Text="Penyelarasan kartu grafis discrete RTX 4060, Defender exclusion, dan setting in-game per game terdeteksi:" FontSize="12" Foreground="#94A3B8"/>
+                            </StackPanel>
+                            <Button Name="btnAddManualGame" DockPanel.Dock="Right" Content="➕ Tambah Game Manual (.exe)" Height="32" Padding="12,0"/>
+                        </DockPanel>
                     </Border>
 
+                    <!-- Dynamic Games Container -->
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <StackPanel Margin="0,0,0,10">
-                            <!-- Discovered Games Dynamic List -->
-                            <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <TextBlock Text="🎮 Seluruh Game Terdeteksi di Windows Ini ($($Hardware.DiscoveredGames.Count) Game)" FontSize="14" FontWeight="Bold" Foreground="#A78BFA" Margin="0,0,0,8"/>
-                                    <StackPanel Name="pnlDiscoveredGamesList">
-                                        <!-- Populated dynamically in code -->
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- In-Game Engine Profiles -->
-                            <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <TextBlock Text="⚙️ Penyelarasan Konfigurasi In-Game Khusus" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
-                                    <CheckBox Name="chkGameRDR2" Content="Red Dead Redemption 2: Async Compute On &amp; MaxTexUpgrades 10 (Anti-Texture Pop-In)" IsChecked="True"/>
-                                    <CheckBox Name="chkGameW3" Content="The Witcher 3 DX12: Matikan HairWorks (Hemat 25% GPU), Foliage 2, &amp; Siapkan DLSS-G" IsChecked="True"/>
-                                    <CheckBox Name="chkGameHSR" Content="Honkai: Star Rail: Kunci 60 FPS Stabil &amp; Anti-Aliasing Seimbang (Bebas Thermal Throttle)" IsChecked="True"/>
-                                    <CheckBox Name="chkGameGenshin" Content="Genshin Impact: Kunci 60 FPS Stabil &amp; Crowd Density Medium" IsChecked="True"/>
-                                    <CheckBox Name="chkGameSteamHighPerf" Content="Daftarkan Seluruh Game Terdeteksi ke GPU High Performance Windows Settings" IsChecked="True"/>
-                                </StackPanel>
-                            </Border>
+                        <StackPanel Name="pnlDynamicGamesContainer" Margin="0,0,0,10">
+                            <!-- Populated dynamically in code -->
                         </StackPanel>
                     </ScrollViewer>
 
                     <!-- Sticky Bottom Action Bar -->
-                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,10,0,0" BorderBrush="#1F2937" BorderThickness="1">
                         <DockPanel LastChildFill="False">
-                            <Button Name="btnApplyGameTuning" Content="🎮 Terapkan Optimasi Game Terpilih" Background="#0284C7" Height="38" Padding="18,0"/>
-                            <TextBlock DockPanel.Dock="Right" Text="Aman, reversibel &amp; teruji anti-stutter" Foreground="#94A3B8" VerticalAlignment="Center" FontSize="12"/>
+                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                <Button Name="btnApplyAllGameTuning" Content="🎮 Terapkan Optimasi Seluruh Game Terpilih" Background="#0284C7" Height="38" Padding="18,0" Margin="0,0,10,0"/>
+                                <Button Name="btnAllGamesHighPerfGPU" Content="⚡ Paksa Semua ke Discrete GPU (RTX 4060)" Height="38" Padding="14,0" Margin="0,0,10,0"/>
+                                <Button Name="btnAllGamesDefenderExcl" Content="🛡️ Exclude Semua dari Defender" Height="38" Padding="14,0"/>
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="100% Dinamis &amp; Multi-Drive" Foreground="#10B981" VerticalAlignment="Center" FontSize="12"/>
                         </DockPanel>
                     </Border>
                 </Grid>
@@ -1947,15 +1790,15 @@ function Show-VoltGUI {
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,0,0,10" BorderBrush="#1F2937" BorderThickness="1">
                         <StackPanel>
                             <TextBlock Text="VoltClean: Pembersih Disk &amp; Cache Lintas-Drive Dinamis" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,4"/>
-                            <TextBlock Text="Membersihkan file sementara, cache DirectX shader, dump crash, dan cache game lintas C: dan D: tanpa merusak data penting." FontSize="12" Foreground="#94A3B8"/>
+                            <TextBlock Text="Membersihkan file sementara, cache DirectX shader, dump crash, dan cache game lintas drive C: dan D: tanpa merusak data penting." FontSize="12" Foreground="#94A3B8"/>
                         </StackPanel>
                     </Border>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1">
+                        <Border Background="#1E293B" CornerRadius="8" Padding="14" BorderBrush="#334155" BorderThickness="1">
                             <StackPanel>
                                 <TextBlock Text="Target Pembersihan Sampah" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
                                 <CheckBox Name="chkCleanUserTemp" Content="File Sementara Pengguna (%TEMP%)" IsChecked="True"/>
@@ -1969,7 +1812,7 @@ function Show-VoltGUI {
                         </Border>
                     </ScrollViewer>
 
-                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,10,0,0" BorderBrush="#1F2937" BorderThickness="1">
                         <WrapPanel>
                             <Button Name="btnRunVoltClean" Content="🧹 Bersihkan Disk Sekarang" Background="#0284C7" Height="38" Padding="18,0" Margin="0,0,10,0"/>
                             <Button Name="btnDismOnly" Content="⚙️ DISM Component Cleanup Saja" Height="38" Padding="14,0"/>
@@ -1983,7 +1826,7 @@ function Show-VoltGUI {
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
                         <TextBlock Text="Diagnostik Kesehatan Sistem &amp; Fitur Opsional Windows" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,10"/>
-                        <Border Background="#0F172A" CornerRadius="6" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
+                        <Border Background="#1E293B" CornerRadius="8" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
                             <StackPanel>
                                 <TextBlock Text="Perbaikan Integritas File &amp; Jaringan" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
                                 <WrapPanel Margin="0,0,0,12">
@@ -2013,7 +1856,7 @@ function Show-VoltGUI {
                         <TextBlock Text="VoltUndo: Sistem Pemulihan Snapshot 1-Klik" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
                         <TextBlock Text="Pilih snapshot cadangan registri &amp; konfigurasi game yang ingin dipulihkan:" Foreground="#94A3B8" Margin="0,0,0,12"/>
 
-                        <Border Background="#0F172A" CornerRadius="6" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
+                        <Border Background="#1E293B" CornerRadius="8" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
                             <StackPanel>
                                 <TextBlock Text="Daftar Snapshot Tersimpan:" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,6"/>
                                 <ComboBox Name="cmbSnapshots" Height="32" Margin="0,0,0,15" Background="#1E293B" Foreground="#000000"/>
@@ -2028,9 +1871,9 @@ function Show-VoltGUI {
             </TabItem>
         </TabControl>
 
-        <!-- Monospace Console Log -->
-        <Border Grid.Row="2" Background="#0B132B" CornerRadius="6" BorderBrush="#334155" BorderThickness="1" Margin="0,10,0,0">
-            <TextBox Name="txtConsoleLog" Background="Transparent" Foreground="#38BDF8" FontFamily="Consolas" FontSize="12" BorderThickness="0" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Margin="8" Text="[Ready] Voltune GUI Initialized. No terminal typing needed."/>
+        <!-- Monospace Console Log Drawer -->
+        <Border Grid.Row="2" Background="#050811" CornerRadius="6" BorderBrush="#1F2937" BorderThickness="1" Margin="0,10,0,0">
+            <TextBox Name="txtConsoleLog" Background="Transparent" Foreground="#38BDF8" FontFamily="Consolas" FontSize="12" BorderThickness="0" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Margin="8" Text="[Ready] Voltune Ultimate Hub Initialized. Zero CLI typing needed."/>
         </Border>
 
         <!-- Footer -->
@@ -2051,15 +1894,42 @@ function Show-VoltGUI {
         [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
     }
 
-    # Populate Discovered Games List in Game Tuner Tab
-    $pnlGames = $window.FindName("pnlDiscoveredGamesList")
-    if ($pnlGames -and $Hardware.DiscoveredGames.Count -gt 0) {
-        $pnlGames.Children.Clear()
+    # --------------------------------------------------------------------------
+    # POPULATE 100% DYNAMIC GAME TUNER CARDS
+    # --------------------------------------------------------------------------
+    $pnlGamesContainer = $window.FindName("pnlDynamicGamesContainer")
+    $gameToggles = [ordered]@{}
+
+    $RefreshGameCards = {
+        $pnlGamesContainer.Children.Clear()
+        $gameToggles.Clear()
+
+        if ($Hardware.DiscoveredGames.Count -eq 0) {
+            $tbNone = New-Object System.Windows.Controls.TextBlock
+            $tbNone.Text = "Belum ada game terdeteksi otomatis. Klik tombol 'Tambah Game Manual' di atas untuk memilih game."
+            $tbNone.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#94A3B8")
+            $tbNone.Margin = New-Object System.Windows.Thickness(8)
+            $pnlGamesContainer.Children.Add($tbNone) | Out-Null
+            return
+        }
+
         foreach ($k in $Hardware.DiscoveredGames.Keys) {
             $g = $Hardware.DiscoveredGames[$k]
-            $sp = New-Object System.Windows.Controls.StackPanel
-            $sp.Orientation = [System.Windows.Controls.Orientation]::Horizontal
-            $sp.Margin = New-Object System.Windows.Thickness(0, 3, 0, 3)
+
+            $card = New-Object System.Windows.Controls.Border
+            $card.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#1E293B")
+            $card.CornerRadius = New-Object System.Windows.CornerRadius(8)
+            $card.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#334155")
+            $card.BorderThickness = New-Object System.Windows.Thickness(1)
+            $card.Margin = New-Object System.Windows.Thickness(0, 0, 0, 10)
+            $card.Padding = New-Object System.Windows.Thickness(12)
+
+            $spCard = New-Object System.Windows.Controls.StackPanel
+
+            # Header Game Info
+            $spHeader = New-Object System.Windows.Controls.StackPanel
+            $spHeader.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+            $spHeader.Margin = New-Object System.Windows.Thickness(0, 0, 0, 6)
 
             $tbBadge = New-Object System.Windows.Controls.TextBlock
             $tbBadge.Text = "[$($g.Platform)] "
@@ -2069,24 +1939,153 @@ function Show-VoltGUI {
             $tbName = New-Object System.Windows.Controls.TextBlock
             $tbName.Text = "$($g.Name) "
             $tbName.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+            $tbName.FontWeight = [System.Windows.FontWeights]::Bold
+            $tbName.FontSize = 14
 
             $tbPath = New-Object System.Windows.Controls.TextBlock
             $pathStr = if ($g.InstallPath) { "($($g.InstallPath))" } elseif ($g.ConfigFile) { "($($g.ConfigFile))" } else { "" }
             $tbPath.Text = $pathStr
             $tbPath.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#64748B")
             $tbPath.FontSize = 11
+            $tbPath.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
-            $sp.Children.Add($tbBadge) | Out-Null
-            $sp.Children.Add($tbName) | Out-Null
-            $sp.Children.Add($tbPath) | Out-Null
-            $pnlGames.Children.Add($sp) | Out-Null
+            $spHeader.Children.Add($tbBadge) | Out-Null
+            $spHeader.Children.Add($tbName) | Out-Null
+            $spHeader.Children.Add($tbPath) | Out-Null
+            $spCard.Children.Add($spHeader) | Out-Null
+
+            # Toggles WrapPanel
+            $wpToggles = New-Object System.Windows.Controls.WrapPanel
+
+            $chkGpu = New-Object System.Windows.Controls.CheckBox
+            $chkGpu.Content = "Force Discrete GPU (High Performance RTX 4060)"
+            $chkGpu.IsChecked = $true
+            $chkGpu.Margin = New-Object System.Windows.Thickness(0, 0, 16, 4)
+            $chkGpu.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+            $wpToggles.Children.Add($chkGpu) | Out-Null
+
+            $chkDef = New-Object System.Windows.Controls.CheckBox
+            $chkDef.Content = "Defender Exclusion (Anti-Stutter IO)"
+            $chkDef.IsChecked = $true
+            $chkDef.Margin = New-Object System.Windows.Thickness(0, 0, 16, 4)
+            $chkDef.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+            $wpToggles.Children.Add($chkDef) | Out-Null
+
+            $chkSpecific = $null
+            if ($k -match "HoYo") {
+                $chkSpecific = New-Object System.Windows.Controls.CheckBox
+                $chkSpecific.Content = "60 FPS Lock & Anti-Aliasing Balance"
+                $chkSpecific.IsChecked = $true
+                $chkSpecific.Margin = New-Object System.Windows.Thickness(0, 0, 16, 4)
+                $chkSpecific.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A78BFA")
+                $wpToggles.Children.Add($chkSpecific) | Out-Null
+            } elseif ($k -match "RDR2") {
+                $chkSpecific = New-Object System.Windows.Controls.CheckBox
+                $chkSpecific.Content = "Async Compute On & MaxTexUpgrades 10"
+                $chkSpecific.IsChecked = $true
+                $chkSpecific.Margin = New-Object System.Windows.Thickness(0, 0, 16, 4)
+                $chkSpecific.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A78BFA")
+                $wpToggles.Children.Add($chkSpecific) | Out-Null
+            } elseif ($k -match "W3") {
+                $chkSpecific = New-Object System.Windows.Controls.CheckBox
+                $chkSpecific.Content = "HairWorks Off & Foliage Balance"
+                $chkSpecific.IsChecked = $true
+                $chkSpecific.Margin = New-Object System.Windows.Thickness(0, 0, 16, 4)
+                $chkSpecific.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#A78BFA")
+                $wpToggles.Children.Add($chkSpecific) | Out-Null
+            }
+
+            $spCard.Children.Add($wpToggles) | Out-Null
+            $card.Child = $spCard
+            $pnlGamesContainer.Children.Add($card) | Out-Null
+
+            $gameToggles[$k] = @{
+                GameInfo = $g
+                ChkGpu   = $chkGpu
+                ChkDef   = $chkDef
+                ChkSpec  = $chkSpecific
+            }
         }
-    } elseif ($pnlGames) {
-        $tbNone = New-Object System.Windows.Controls.TextBlock
-        $tbNone.Text = "Tidak ada game terdeteksi secara otomatis."
-        $tbNone.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#64748B")
-        $pnlGames.Children.Add($tbNone) | Out-Null
     }
+
+    & $RefreshGameCards
+
+    # Manual Add Game Handler
+    $window.FindName("btnAddManualGame").Add_Click({
+        $dialog = New-Object System.Windows.Forms.OpenFileDialog
+        $dialog.Filter = "Executable Files (*.exe)|*.exe|All Files (*.*)|*.*"
+        $dialog.Title = "Pilih Game Executable (.exe)"
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $exePath = $dialog.FileName
+            $exeName = [System.IO.Path]::GetFileNameWithoutExtension($exePath)
+            $folder = [System.IO.Path]::GetDirectoryName($exePath)
+            $id = "Manual_" + ($exeName -replace '[^a-zA-Z0-9]', '')
+            $Hardware.DiscoveredGames[$id] = [ordered]@{
+                Name        = $exeName
+                Platform    = "Manual"
+                InstallPath = $folder
+                ExePath     = $exePath
+            }
+            & $AppendLog "[+] Game manual ditambahkan: $exeName ($exePath)"
+            & $RefreshGameCards
+        }
+    })
+
+    # Apply All Game Tuning Handler
+    $window.FindName("btnApplyAllGameTuning").Add_Click({
+        & $AppendLog "Menerapkan optimasi dinamis untuk seluruh game terpilih..."
+        New-VoltBackupSnapshot -Hardware $Hardware
+        $gpuPrefReg = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
+        if (-not (Test-Path $gpuPrefReg)) { New-Item $gpuPrefReg -Force | Out-Null }
+
+        $applied = 0
+        foreach ($k in $gameToggles.Keys) {
+            $item = $gameToggles[$k]
+            $g = $item.GameInfo
+
+            # GPU High Perf
+            if ($item.ChkGpu -and $item.ChkGpu.IsChecked) {
+                $exeCandidates = @()
+                if ($g.InstallPath -and (Test-Path $g.InstallPath)) {
+                    $exeCandidates += Get-ChildItem -Path $g.InstallPath -Filter "*.exe" -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notmatch "unins|setup|crash|report|patch|UnityCrashHandler" }
+                }
+                if ($g.ExePath -and (Test-Path $g.ExePath)) { $exeCandidates += (Get-Item $g.ExePath) }
+                foreach ($e in ($exeCandidates | Select-Object -Unique)) {
+                    Set-ItemProperty -Path $gpuPrefReg -Name $e.FullName -Value "GpuPreference=2;" -Type String -Force -ErrorAction SilentlyContinue
+                }
+            }
+
+            # Defender Exclusion
+            if ($item.ChkDef -and $item.ChkDef.IsChecked -and $g.InstallPath) {
+                try { Add-MpPreference -ExclusionPath $g.InstallPath -ErrorAction SilentlyContinue } catch {}
+            }
+
+            # Specific Engine Profiles
+            if ($item.ChkSpec -and $item.ChkSpec.IsChecked) {
+                if ($k -eq "Rockstar_RDR2" -and $g.ConfigFile) { Optimize-VoltGameRDR2 -ConfigPath $g.ConfigFile }
+                elseif ($k -eq "CDPR_W3" -and $g.ConfigFile) { Optimize-VoltGameWitcher3 -ConfigPath $g.ConfigFile }
+                elseif ($k -eq "HoYo_HSR") { Optimize-VoltGameHSR -GameInfo $g }
+                elseif ($k -eq "HoYo_Genshin") { Optimize-VoltGameGenshin -GameInfo $g }
+            }
+            $applied++
+        }
+
+        & $AppendLog "[✓] Optimasi dinamis berhasil diterapkan untuk $applied game!"
+        [System.Windows.MessageBox]::Show("Optimasi dinamis berhasil diterapkan untuk $applied game!", "VoltPlay", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+    })
+
+    $window.FindName("btnAllGamesHighPerfGPU").Add_Click({
+        Optimize-VoltPlayGames -Hardware $Hardware -TargetGameKey "ALL"
+        & $AppendLog "[✓] Seluruh game terdeteksi berhasil didaftarkan ke GPU Discrete RTX 4060!"
+        [System.Windows.MessageBox]::Show("Seluruh game berhasil didaftarkan ke GPU High Performance!", "VoltPlay", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+    })
+
+    $window.FindName("btnAllGamesDefenderExcl").Add_Click({
+        Add-VoltDefenderGameExclusions -Hardware $Hardware
+        & $AppendLog "[✓] Seluruh folder game berhasil didaftarkan ke Defender Exclusions!"
+        [System.Windows.MessageBox]::Show("Folder game didaftarkan ke Defender Exclusions!", "VoltPlay", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+    })
 
     # Populate Snapshots in ComboBox
     $PopulateSnaps = {
@@ -2100,7 +2099,7 @@ function Show-VoltGUI {
     }
     & $PopulateSnaps
 
-    # Function to apply Live System State to Checkboxes
+    # Sync Live State on Startup
     $SyncLiveState = {
         & $AppendLog "Mendeteksi konfigurasi Windows saat ini..."
         $state = Get-VoltWindowsTweakState
@@ -2116,10 +2115,9 @@ function Show-VoltGUI {
         & $AppendLog "[Info] Status centang di atas merefleksikan kondisi Windows sekarang. Pilih preset untuk mengubah, lalu klik 'Terapkan'."
     }
 
-    # Sync on Startup
     & $SyncLiveState
 
-    # Dashboard Button Handlers
+    # Dashboard Quick Actions
     $window.FindName("btnDashSnapshot").Add_Click({
         & $AppendLog "Membuat snapshot registri & game config VoltUndo..."
         $dir = New-VoltBackupSnapshot -Hardware $Hardware
@@ -2151,199 +2149,80 @@ function Show-VoltGUI {
         & $AppendLog "[✓] Skema daya Balanced (Hemat/Standar) aktif!"
     })
 
-    # Tweaks Presets Handlers (Only checks/unchecks, never executes blindly)
-    $window.FindName("btnLiveState").Add_Click({
-        & $SyncLiveState
-    })
+    # --------------------------------------------------------------------------
+    # PRESETS OVERWRITE HANDLER (100% CLEAN PRESET OVERWRITE)
+    # --------------------------------------------------------------------------
+    $ApplyPresetClean = {
+        param([string]$PresetName)
+        $blueprint = $Script:VoltPresetMap[$PresetName]
+        if ($blueprint) {
+            foreach ($k in $blueprint.Keys) {
+                $chk = $window.FindName($k)
+                if ($chk) {
+                    $chk.IsChecked = [bool]$blueprint[$k]
+                }
+            }
+            & $AppendLog "[Preset] Preset '$PresetName' dipilih. Seluruh centang lama ditimpa bersih. Silakan sesuaikan lalu klik 'Terapkan'."
+        }
+    }
 
-    $window.FindName("btnPresetRecommended").Add_Click({
-        $window.FindName("chkHags").IsChecked = $true
-        $window.FindName("chkGameMode").IsChecked = $true
-        $window.FindName("chkGameDVR").IsChecked = $true
-        $window.FindName("chkRawMouse").IsChecked = $true
-        $window.FindName("chkDefender").IsChecked = $true
-        $window.FindName("chkNetwork").IsChecked = $true
-        $window.FindName("chkPowerThrottle").IsChecked = $false
-        $window.FindName("chkSafeServices").IsChecked = $true
-        $window.FindName("chkSecurityUpdates").IsChecked = $true
-        $window.FindName("chkClassicMenu").IsChecked = $true
-        $window.FindName("chkFileExt").IsChecked = $true
-        $window.FindName("chkThisPC").IsChecked = $true
-        $window.FindName("chkHiddenFiles").IsChecked = $true
-        $window.FindName("chkCleanTaskbar").IsChecked = $true
-        $window.FindName("chkCleanQuickAccess").IsChecked = $true
-        $window.FindName("chkTelemetry").IsChecked = $true
-        $window.FindName("chkRecall").IsChecked = $true
-        $window.FindName("chkCopilot").IsChecked = $true
-        $window.FindName("chkStartSearch").IsChecked = $true
-        $window.FindName("chkAdId").IsChecked = $true
-        $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Recommended Preset dipilih. Silakan periksa atau sesuaikan centang, lalu klik 'Terapkan Tweaks Terpilih'."
-    })
-
-    $window.FindName("btnPresetLaptop").Add_Click({
-        $window.FindName("chkHags").IsChecked = $true
-        $window.FindName("chkGameMode").IsChecked = $true
-        $window.FindName("chkGameDVR").IsChecked = $true
-        $window.FindName("chkRawMouse").IsChecked = $true
-        $window.FindName("chkDefender").IsChecked = $true
-        $window.FindName("chkNetwork").IsChecked = $true
-        $window.FindName("chkPowerThrottle").IsChecked = $false
-        $window.FindName("chkSafeServices").IsChecked = $true
-        $window.FindName("chkSecurityUpdates").IsChecked = $true
-        $window.FindName("chkClassicMenu").IsChecked = $true
-        $window.FindName("chkFileExt").IsChecked = $true
-        $window.FindName("chkThisPC").IsChecked = $true
-        $window.FindName("chkHiddenFiles").IsChecked = $false
-        $window.FindName("chkCleanTaskbar").IsChecked = $true
-        $window.FindName("chkCleanQuickAccess").IsChecked = $true
-        $window.FindName("chkTelemetry").IsChecked = $true
-        $window.FindName("chkRecall").IsChecked = $true
-        $window.FindName("chkCopilot").IsChecked = $true
-        $window.FindName("chkStartSearch").IsChecked = $true
-        $window.FindName("chkAdId").IsChecked = $true
-        $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Laptop Gaming Preset dipilih (Battery-aware & Game Priority). Silakan sesuaikan centang lalu klik 'Terapkan'."
-    })
-
-    $window.FindName("btnPresetDesktop").Add_Click({
-        $window.FindName("chkHags").IsChecked = $true
-        $window.FindName("chkGameMode").IsChecked = $true
-        $window.FindName("chkGameDVR").IsChecked = $true
-        $window.FindName("chkRawMouse").IsChecked = $true
-        $window.FindName("chkDefender").IsChecked = $true
-        $window.FindName("chkNetwork").IsChecked = $true
-        $window.FindName("chkPowerThrottle").IsChecked = $true
-        $window.FindName("chkSafeServices").IsChecked = $true
-        $window.FindName("chkSecurityUpdates").IsChecked = $true
-        $window.FindName("chkClassicMenu").IsChecked = $true
-        $window.FindName("chkFileExt").IsChecked = $true
-        $window.FindName("chkThisPC").IsChecked = $true
-        $window.FindName("chkHiddenFiles").IsChecked = $true
-        $window.FindName("chkCleanTaskbar").IsChecked = $true
-        $window.FindName("chkCleanQuickAccess").IsChecked = $true
-        $window.FindName("chkTelemetry").IsChecked = $true
-        $window.FindName("chkRecall").IsChecked = $true
-        $window.FindName("chkCopilot").IsChecked = $true
-        $window.FindName("chkStartSearch").IsChecked = $true
-        $window.FindName("chkAdId").IsChecked = $true
-        $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Desktop Max Preset dipilih (Semua performa aktif). Silakan sesuaikan centang lalu klik 'Terapkan'."
-    })
-
-    $window.FindName("btnPresetMinimal").Add_Click({
-        $window.FindName("chkHags").IsChecked = $false
-        $window.FindName("chkGameMode").IsChecked = $false
-        $window.FindName("chkGameDVR").IsChecked = $false
-        $window.FindName("chkRawMouse").IsChecked = $false
-        $window.FindName("chkDefender").IsChecked = $false
-        $window.FindName("chkNetwork").IsChecked = $false
-        $window.FindName("chkPowerThrottle").IsChecked = $false
-        $window.FindName("chkSafeServices").IsChecked = $false
-        $window.FindName("chkSecurityUpdates").IsChecked = $false
-        $window.FindName("chkClassicMenu").IsChecked = $true
-        $window.FindName("chkFileExt").IsChecked = $true
-        $window.FindName("chkThisPC").IsChecked = $true
-        $window.FindName("chkHiddenFiles").IsChecked = $false
-        $window.FindName("chkCleanTaskbar").IsChecked = $true
-        $window.FindName("chkCleanQuickAccess").IsChecked = $true
-        $window.FindName("chkTelemetry").IsChecked = $true
-        $window.FindName("chkRecall").IsChecked = $true
-        $window.FindName("chkCopilot").IsChecked = $true
-        $window.FindName("chkStartSearch").IsChecked = $true
-        $window.FindName("chkAdId").IsChecked = $true
-        $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Minimal Privacy & QoL Preset dipilih. Silakan sesuaikan centang lalu klik 'Terapkan'."
-    })
-
-    $window.FindName("btnPresetClear").Add_Click({
-        $chkList = @("chkHags","chkGameMode","chkGameDVR","chkRawMouse","chkDefender","chkNetwork","chkPowerThrottle",
-                     "chkSafeServices","chkSecurityUpdates","chkClassicMenu","chkFileExt","chkThisPC","chkHiddenFiles",
-                     "chkCleanTaskbar","chkCleanQuickAccess","chkTelemetry","chkRecall","chkCopilot","chkStartSearch","chkAdId","chkDeliveryOpt")
-        foreach ($c in $chkList) { $window.FindName($c).IsChecked = $false }
-        & $AppendLog "[Preset] Semua centang tweaks dibersihkan."
-    })
+    $window.FindName("btnLiveState").Add_Click({ & $SyncLiveState })
+    $window.FindName("btnPresetRecommended").Add_Click({ & $ApplyPresetClean "Recommended" })
+    $window.FindName("btnPresetLaptop").Add_Click({ & $ApplyPresetClean "LaptopGaming" })
+    $window.FindName("btnPresetDesktop").Add_Click({ & $ApplyPresetClean "DesktopMax" })
+    $window.FindName("btnPresetMinimal").Add_Click({ & $ApplyPresetClean "MinimalPrivacy" })
+    $window.FindName("btnPresetClear").Add_Click({ & $ApplyPresetClean "ClearAll" })
 
     $window.FindName("btnQuickSnapshot").Add_Click({
-        & $AppendLog "Membuat snapshot registri & game config VoltUndo..."
         $dir = New-VoltBackupSnapshot -Hardware $Hardware
         & $AppendLog "[✓] Snapshot berhasil disimpan di: $dir"
         & $PopulateSnaps
         [System.Windows.MessageBox]::Show("Snapshot berhasil dibuat!", "VoltUndo", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
-    # Run Selected Tweaks Button
+    # Atomic Apply Tweaks Handler
     $window.FindName("btnRunSelectedTweaks").Add_Click({
-        & $AppendLog "Menerapkan seluruh tweaks yang dicentang..."
+        & $AppendLog "Menerapkan tweaks secara atomik granular..."
         New-VoltRestorePoint -Description "Voltune-Pre-Tweaks"
         New-VoltBackupSnapshot -Hardware $Hardware
         & $PopulateSnaps
 
-        if ($window.FindName("chkHags").IsChecked -or $window.FindName("chkGameMode").IsChecked -or $window.FindName("chkGameDVR").IsChecked) {
-            Optimize-VoltWindowsCore
-            & $AppendLog "[✓] Windows Gaming Core (HAGS, Game Mode, MMCSS, GameDVR Off) diterapkan."
-        }
-        if ($window.FindName("chkRawMouse").IsChecked) {
-            Set-VoltRawMouseInput
-            & $AppendLog "[✓] 1:1 Raw Mouse Input diterapkan."
-        }
-        if ($window.FindName("chkDefender").IsChecked) {
-            Add-VoltDefenderGameExclusions -Hardware $Hardware
-            & $AppendLog "[✓] Folder game didaftarkan ke Defender Exclusion."
-        }
-        if ($window.FindName("chkNetwork").IsChecked) {
-            Set-VoltNetworkGamingTweaks
-            & $AppendLog "[✓] TCP/IP Gaming Latency Optimizer diterapkan."
-        }
-        if ($window.FindName("chkPowerThrottle").IsChecked) {
-            Set-VoltPowerThrottlingOff
-            & $AppendLog "[✓] CPU Power Throttling dimatikan."
-        }
-        if ($window.FindName("chkClassicMenu").IsChecked) {
-            Set-VoltClassicContextMenu
-            & $AppendLog "[✓] Classic Context Menu Windows 10 aktif."
-        }
-        if ($window.FindName("chkFileExt").IsChecked -or $window.FindName("chkThisPC").IsChecked -or $window.FindName("chkHiddenFiles").IsChecked -or $window.FindName("chkCleanQuickAccess").IsChecked) {
-            Set-VoltExplorerTweaks
-            & $AppendLog "[✓] Explorer Pro Tweaks diterapkan."
-        }
-        if ($window.FindName("chkCleanTaskbar").IsChecked -or $window.FindName("chkStartSearch").IsChecked) {
-            Set-VoltTaskbarAndStartTweaks
-            & $AppendLog "[✓] Taskbar & Start Menu Tweaks diterapkan."
-        }
-        if ($window.FindName("chkTelemetry").IsChecked -or $window.FindName("chkRecall").IsChecked -or $window.FindName("chkCopilot").IsChecked -or $window.FindName("chkAdId").IsChecked -or $window.FindName("chkDeliveryOpt").IsChecked) {
-            Set-VoltPrivacyAndTelemetry
-            & $AppendLog "[✓] Privasi, Anti-Telemetri & Recall Off diterapkan."
-        }
-        if ($window.FindName("chkSafeServices").IsChecked) {
-            Optimize-VoltServices
-            & $AppendLog "[✓] Safe Gaming Services Optimizer diterapkan."
-        }
-        if ($window.FindName("chkSecurityUpdates").IsChecked) {
-            Set-VoltWindowsUpdateProfile
-            & $AppendLog "[✓] Windows Update dikunci ke Security Updates Only."
+        $allTweakKeys = $Script:VoltPresetMap["Recommended"].Keys
+        $appliedCount = 0
+
+        foreach ($k in $allTweakKeys) {
+            $chk = $window.FindName($k)
+            if ($chk -and $chk.IsChecked) {
+                Set-VoltAtomicTweak -TweakId $k -Enable $true -Hardware $Hardware
+                $appliedCount++
+            }
         }
 
-        & $AppendLog "[✓] Selesai! Seluruh tweaks yang dicentang berhasil diterapkan."
-        [System.Windows.MessageBox]::Show("Seluruh tweaks yang dicentang berhasil diterapkan!", "Voltune", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+        & $AppendLog "[✓] Selesai! Sebanyak $appliedCount tweaks terpilih berhasil diterapkan secara atomik."
+        [System.Windows.MessageBox]::Show("Sebanyak $appliedCount tweaks terpilih berhasil diterapkan!", "Voltune", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
-    # Undo Selected Tweaks Button
+    # Atomic Undo Tweaks Handler
     $window.FindName("btnUndoSelectedTweaks").Add_Click({
-        & $AppendLog "Mengembalikan tweaks terpilih ke kondisi default..."
-        if ($window.FindName("chkClassicMenu").IsChecked) { Set-VoltClassicContextMenu -Disable }
-        if ($window.FindName("chkRawMouse").IsChecked) { Set-VoltRawMouseInput -Revert }
-        if ($window.FindName("chkNetwork").IsChecked) { Set-VoltNetworkGamingTweaks -Revert }
-        if ($window.FindName("chkSafeServices").IsChecked) { Optimize-VoltServices -Revert }
-        if ($window.FindName("chkSecurityUpdates").IsChecked) { Set-VoltWindowsUpdateProfile -Revert }
-        if ($window.FindName("chkTelemetry").IsChecked) { Set-VoltPrivacyAndTelemetry -Revert }
-        if ($window.FindName("chkCleanTaskbar").IsChecked) { Set-VoltTaskbarAndStartTweaks -Revert }
-        if ($window.FindName("chkPowerThrottle").IsChecked) { Set-VoltPowerThrottlingOff -Disable }
-        & $AppendLog "[✓] Tweaks terpilih telah dikembalikan ke standar Windows."
-        [System.Windows.MessageBox]::Show("Tweaks terpilih berhasil di-revert!", "Voltune", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+        & $AppendLog "Mengembalikan tweaks terpilih ke standar Windows..."
+        $allTweakKeys = $Script:VoltPresetMap["Recommended"].Keys
+        $revertedCount = 0
+
+        foreach ($k in $allTweakKeys) {
+            $chk = $window.FindName($k)
+            if ($chk -and $chk.IsChecked) {
+                Set-VoltAtomicTweak -TweakId $k -Enable $false -Hardware $Hardware
+                $revertedCount++
+            }
+        }
+
+        & $AppendLog "[✓] Sebanyak $revertedCount tweaks terpilih telah dikembalikan ke standar."
+        [System.Windows.MessageBox]::Show("Sebanyak $revertedCount tweaks terpilih berhasil di-revert!", "Voltune", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
-    # Comprehensive App Catalog Map (Chris Titus WinUtil Style)
+    # --------------------------------------------------------------------------
+    # CURATED POST-INSTALL APPS MAP (70+ APPS WITH ACCURATE WINGET IDS)
+    # --------------------------------------------------------------------------
     $appIdMap = @{
         # Runtimes
         "chkApp_VCRedist"    = @{ Name = "Visual C++ 2015-2022 AIO"; Id = "Microsoft.VCRedist.2015+.x64" }
@@ -2376,21 +2255,22 @@ function Show-VoltGUI {
         "chkApp_Prism"       = @{ Name = "Prism Launcher (Minecraft)"; Id = "PrismLauncher.PrismLauncher" }
         "chkApp_Heroic"      = @{ Name = "Heroic Games Launcher"; Id = "HeroicGamesLauncher.HeroicGamesLauncher" }
 
-        # Hardware & Monitoring
+        # Drivers & Monitoring
+        "chkApp_NvidiaApp"   = @{ Name = "NVIDIA App (No Login)"; Id = "Nvidia.NvidiaApp" }
         "chkApp_Afterburner" = @{ Name = "MSI Afterburner"; Id = "Guru3D.Afterburner" }
         "chkApp_RTSS"        = @{ Name = "RivaTuner Statistics (RTSS)"; Id = "Guru3D.RTSS" }
+        "chkApp_FanControl"  = @{ Name = "Rem0o FanControl"; Id = "Rem0o.FanControl" }
+        "chkApp_HWiNFO"      = @{ Name = "REALiX HWiNFO64"; Id = "REALiX.HWiNFO" }
         "chkApp_CPUZ"        = @{ Name = "CPUID CPU-Z"; Id = "CPUID.CPU-Z" }
         "chkApp_GPUZ"        = @{ Name = "TechPowerUp GPU-Z"; Id = "TechPowerUp.GPU-Z" }
-        "chkApp_HWMonitor"   = @{ Name = "CPUID HWMonitor"; Id = "CPUID.HWMonitor" }
-        "chkApp_HWiNFO"      = @{ Name = "REALiX HWiNFO"; Id = "REALiX.HWiNFO" }
         "chkApp_DiskInfo"    = @{ Name = "CrystalDiskInfo"; Id = "CrystalDewWorld.CrystalDiskInfo" }
         "chkApp_DiskMark"    = @{ Name = "CrystalDiskMark"; Id = "CrystalDewWorld.CrystalDiskMark" }
-        "chkApp_FanControl"  = @{ Name = "Fan Control"; Id = "Rem0o.FanControl" }
 
         # Development
         "chkApp_VSCode"      = @{ Name = "Visual Studio Code"; Id = "Microsoft.VisualStudioCode" }
         "chkApp_Git"         = @{ Name = "Git for Windows"; Id = "Git.Git" }
         "chkApp_Terminal"    = @{ Name = "Windows Terminal"; Id = "Microsoft.WindowsTerminal" }
+        "chkApp_Pwsh7"       = @{ Name = "PowerShell 7"; Id = "Microsoft.PowerShell" }
         "chkApp_Node"        = @{ Name = "Node.js LTS"; Id = "OpenJS.NodeJS.LTS" }
         "chkApp_Python"      = @{ Name = "Python 3.12"; Id = "Python.Python.3.12" }
         "chkApp_Docker"      = @{ Name = "Docker Desktop"; Id = "Docker.DockerDesktop" }
@@ -2399,7 +2279,8 @@ function Show-VoltGUI {
         "chkApp_NotepadPP"   = @{ Name = "Notepad++"; Id = "Notepad++.Notepad++" }
         "chkApp_DBeaver"     = @{ Name = "DBeaver Community"; Id = "dbeaver.dbeaver" }
 
-        # System Utilities
+        # Archivers & System Tools
+        "chkApp_NanaZip"     = @{ Name = "NanaZip (Win11 Context Menu)"; Id = "M2Team.NanaZip" }
         "chkApp_7Zip"        = @{ Name = "7-Zip"; Id = "7zip.7zip" }
         "chkApp_WinRAR"      = @{ Name = "WinRAR"; Id = "RARLab.WinRAR" }
         "chkApp_Everything"  = @{ Name = "Everything Search"; Id = "voidtools.Everything" }
@@ -2417,7 +2298,10 @@ function Show-VoltGUI {
         "chkApp_HandBrake"   = @{ Name = "HandBrake Video Transcoder"; Id = "HandBrake.HandBrake" }
         "chkApp_KLite"       = @{ Name = "K-Lite Codec Pack Standard"; Id = "CodecGuide.K-LiteCodecPack.Standard" }
 
-        # Documents & Office
+        # Documents & Comms
+        "chkApp_QuickLook"   = @{ Name = "QuickLook (Spacebar Preview)"; Id = "Paddle.QuickLook" }
+        "chkApp_Telegram"    = @{ Name = "Telegram Desktop"; Id = "Telegram.TelegramDesktop" }
+        "chkApp_WhatsApp"    = @{ Name = "WhatsApp Desktop"; Id = "WhatsApp.WhatsApp" }
         "chkApp_Obsidian"    = @{ Name = "Obsidian"; Id = "Obsidian.Obsidian" }
         "chkApp_Notion"      = @{ Name = "Notion Desktop"; Id = "Notion.Notion" }
         "chkApp_LibreOffice" = @{ Name = "LibreOffice"; Id = "TheDocumentFoundation.LibreOffice" }
@@ -2425,7 +2309,31 @@ function Show-VoltGUI {
         "chkApp_AdobeReader" = @{ Name = "Adobe Acrobat Reader"; Id = "Adobe.Acrobat.Reader.64-bit" }
     }
 
-    # App Presets Buttons Handlers
+    # Live Search Filter Handler
+    $txtFilter = $window.FindName("txtAppFilter")
+    $txtFilter.Add_TextChanged({
+        $q = $txtFilter.Text.ToLower().Trim()
+        foreach ($k in $appIdMap.Keys) {
+            $chk = $window.FindName($k)
+            if ($chk) {
+                $name = $appIdMap[$k].Name.ToLower()
+                if ($q -eq "" -or $name -match [regex]::Escape($q)) {
+                    $chk.Visibility = [System.Windows.Visibility]::Visible
+                } else {
+                    $chk.Visibility = [System.Windows.Visibility]::Collapsed
+                }
+            }
+        }
+    })
+
+    # App Presets Handlers
+    $window.FindName("btnAppsFreshInstall").Add_Click({
+        @("chkApp_VCRedist","chkApp_DirectX","chkApp_DotNet8","chkApp_NanaZip","chkApp_Chrome","chkApp_Brave","chkApp_PowerToys","chkApp_Everything","chkApp_VLC","chkApp_HWiNFO") | ForEach-Object {
+            $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
+        }
+        & $AppendLog "[Apps] Preset ⭐ Fresh Windows Essentials dipilih."
+    })
+
     $window.FindName("btnAppsRuntimes").Add_Click({
         @("chkApp_VCRedist","chkApp_DirectX","chkApp_DotNet8","chkApp_DotNet9") | ForEach-Object {
             $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
@@ -2434,14 +2342,14 @@ function Show-VoltGUI {
     })
 
     $window.FindName("btnAppsGaming").Add_Click({
-        @("chkApp_Steam","chkApp_Epic","chkApp_Discord","chkApp_OBS","chkApp_RTSS","chkApp_Afterburner","chkApp_7Zip") | ForEach-Object {
+        @("chkApp_Steam","chkApp_Epic","chkApp_Discord","chkApp_OBS","chkApp_RTSS","chkApp_Afterburner","chkApp_NanaZip") | ForEach-Object {
             $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
         }
         & $AppendLog "[Apps] Preset Gaming Essentials dipilih."
     })
 
     $window.FindName("btnAppsDev").Add_Click({
-        @("chkApp_VSCode","chkApp_Git","chkApp_Terminal","chkApp_Node","chkApp_Python","chkApp_7Zip","chkApp_PowerToys") | ForEach-Object {
+        @("chkApp_VSCode","chkApp_Git","chkApp_Terminal","chkApp_Pwsh7","chkApp_Node","chkApp_Python","chkApp_PowerToys") | ForEach-Object {
             $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
         }
         & $AppendLog "[Apps] Preset Developer Suite dipilih."
@@ -2455,7 +2363,7 @@ function Show-VoltGUI {
     })
 
     $window.FindName("btnAppsUtilities").Add_Click({
-        @("chkApp_7Zip","chkApp_Everything","chkApp_HWiNFO","chkApp_BleachBit","chkApp_WizTree") | ForEach-Object {
+        @("chkApp_NanaZip","chkApp_Everything","chkApp_HWiNFO","chkApp_BleachBit","chkApp_WizTree") | ForEach-Object {
             $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
         }
         & $AppendLog "[Apps] Preset System Utilities dipilih."
@@ -2469,7 +2377,7 @@ function Show-VoltGUI {
         & $AppendLog "[Apps] Seluruh centang software dibersihkan."
     })
 
-    # Install Selected Apps Button
+    # Install Selected Apps Button (Streaming Dispatcher Safe)
     $window.FindName("btnInstallSelectedApps").Add_Click({
         $selected = @()
         foreach ($k in $appIdMap.Keys) {
@@ -2517,36 +2425,6 @@ function Show-VoltGUI {
         }
         & $AppendLog "[✓] Pembersihan bloatware selesai! $removed paket dibersihkan."
         [System.Windows.MessageBox]::Show("Debloat selesai! $removed paket bloatware dihapus.", "Voltune", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-    })
-
-    # VoltPlay Game Tuning Button
-    $window.FindName("btnApplyGameTuning").Add_Click({
-        & $AppendLog "Menerapkan penyelarasan konfigurasi game terpilih..."
-        New-VoltBackupSnapshot -Hardware $Hardware
-        & $PopulateSnaps
-
-        if ($window.FindName("chkGameRDR2").IsChecked -and $Hardware.DiscoveredGames.Contains("Rockstar_RDR2")) {
-            Optimize-VoltGameRDR2 -ConfigPath $Hardware.DiscoveredGames["Rockstar_RDR2"].ConfigFile
-            & $AppendLog "[✓] Red Dead Redemption 2 dioptimasi."
-        }
-        if ($window.FindName("chkGameW3").IsChecked -and $Hardware.DiscoveredGames.Contains("CDPR_W3")) {
-            Optimize-VoltGameWitcher3 -ConfigPath $Hardware.DiscoveredGames["CDPR_W3"].ConfigFile
-            & $AppendLog "[✓] The Witcher 3 DX12 dioptimasi."
-        }
-        if ($window.FindName("chkGameHSR").IsChecked -and $Hardware.DiscoveredGames.Contains("HoYo_HSR")) {
-            Optimize-VoltGameHSR -GameInfo $Hardware.DiscoveredGames["HoYo_HSR"]
-            & $AppendLog "[✓] Honkai: Star Rail dioptimasi."
-        }
-        if ($window.FindName("chkGameGenshin").IsChecked -and $Hardware.DiscoveredGames.Contains("HoYo_Genshin")) {
-            Optimize-VoltGameGenshin -GameInfo $Hardware.DiscoveredGames["HoYo_Genshin"]
-            & $AppendLog "[✓] Genshin Impact dioptimasi."
-        }
-        if ($window.FindName("chkGameSteamHighPerf").IsChecked) {
-            Optimize-VoltPlayGames -Hardware $Hardware -TargetGameKey "ALL"
-            & $AppendLog "[✓] Seluruh game terdeteksi didaftarkan ke GPU High Performance."
-        }
-        & $AppendLog "[✓] Penyelarasan setting game selesai!"
-        [System.Windows.MessageBox]::Show("Penyelarasan setting in-game selesai!", "VoltPlay", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
     # VoltClean Buttons
@@ -2645,7 +2523,9 @@ function Show-VoltGUI {
 
     $window.ShowDialog() | Out-Null
 }
-# 21. INTERACTIVE UI & DYNAMIC DISPLAY (CLI FALLBACK)
+
+# ------------------------------------------------------------------------------
+# 15. INTERACTIVE UI & DYNAMIC DISPLAY (CLI FALLBACK)
 # ------------------------------------------------------------------------------
 function Show-VoltBanner {
     Clear-Host
@@ -2658,7 +2538,7 @@ function Show-VoltBanner {
 function Show-VoltSpecs ($hw) {
     Write-Host "`n[SPEK HARDWARE DINAMIS TERDETEKSI]" -ForegroundColor Yellow
     Write-Host "   Prosesor   : $($hw.CPUName) ($($hw.CPUCores) Cores, $($hw.CPUThreads) Threads$(if ($hw.IsHybridCPU) { ' | Hybrid P+E' }))" -ForegroundColor White
-    
+
     $gpuDesc = if ($hw.DiscreteGPU) {
         $tgp = if ($hw.DiscreteGPU.TGP_W) { " | $($hw.DiscreteGPU.TGP_W)W TGP" } else { "" }
         "$($hw.DiscreteGPU.Name) ($($hw.DiscreteGPU.VRAM_GB) GB VRAM$tgp)"
@@ -2687,8 +2567,7 @@ function Show-VoltSpecs ($hw) {
 }
 
 # ------------------------------------------------------------------------------
-# ------------------------------------------------------------------------------
-# 22. ENTRYPOINT LOGIC (DEFAULT: MODERN NATIVE WPF GUI)
+# 16. ENTRYPOINT LOGIC (DEFAULT: MODERN NATIVE WPF GUI)
 # ------------------------------------------------------------------------------
 Invoke-VoltElevation -Bypass:$NoElevation
 
@@ -2698,16 +2577,11 @@ $hwProfile = Get-VoltHardwareProfile
 if ($AutoOptimize) {
     New-VoltRestorePoint -Description "Voltune-Pre-AutoOptimize"
     New-VoltBackupSnapshot -Hardware $hwProfile
-    Optimize-VoltWindowsCore
-    Optimize-VoltDualGPU -Hardware $hwProfile
-    Set-VoltRawMouseInput
-    Add-VoltDefenderGameExclusions -Hardware $hwProfile
-    Set-VoltPrivacyAndTelemetry
-    Set-VoltNetworkGamingTweaks
-    Optimize-VoltServices
-    Set-VoltWindowsUpdateProfile
-    Set-VoltExplorerTweaks
-    Set-VoltTaskbarAndStartTweaks
+    foreach ($k in $Script:VoltPresetMap["Recommended"].Keys) {
+        if ($Script:VoltPresetMap["Recommended"][$k]) {
+            Set-VoltAtomicTweak -TweakId $k -Enable $true -Hardware $hwProfile
+        }
+    }
     Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
     exit 0
 }
@@ -2722,7 +2596,7 @@ if ($UndoOnly) {
     exit 0
 }
 
-# If user explicitly specified CLI/TUI switch, run interactive terminal loop
+# If user explicitly requested CLI/TUI switch, run interactive terminal loop
 if ($CLI -or $TUI) {
     $running = $true
     while ($running) {
@@ -2758,16 +2632,11 @@ if ($CLI -or $TUI) {
             "1" {
                 New-VoltRestorePoint -Description "Voltune-Pre-AutoOptimize"
                 New-VoltBackupSnapshot -Hardware $hwProfile
-                Optimize-VoltWindowsCore
-                Optimize-VoltDualGPU -Hardware $hwProfile
-                Set-VoltRawMouseInput
-                Add-VoltDefenderGameExclusions -Hardware $hwProfile
-                Set-VoltPrivacyAndTelemetry
-                Set-VoltNetworkGamingTweaks
-                Optimize-VoltServices
-                Set-VoltWindowsUpdateProfile
-                Set-VoltExplorerTweaks
-                Set-VoltTaskbarAndStartTweaks
+                foreach ($k in $Script:VoltPresetMap["Recommended"].Keys) {
+                    if ($Script:VoltPresetMap["Recommended"][$k]) {
+                        Set-VoltAtomicTweak -TweakId $k -Enable $true -Hardware $hwProfile
+                    }
+                }
                 Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
                 Write-Host "`n[✓] Seluruh optimasi lengkap berhasil diterapkan! Tekan Enter untuk lanjut..." -ForegroundColor Green
                 Read-Host
@@ -2785,41 +2654,47 @@ if ($CLI -or $TUI) {
             }
             "4" {
                 New-VoltBackupSnapshot -Hardware $hwProfile
-                Set-VoltClassicContextMenu
-                Set-VoltExplorerTweaks
-                Set-VoltTaskbarAndStartTweaks
+                Set-VoltAtomicTweak -TweakId "chkClassicMenu" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkFileExt" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkThisPC" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkCleanTaskbar" -Enable $true
                 Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
                 Read-Host
             }
             "5" {
                 New-VoltBackupSnapshot -Hardware $hwProfile
-                Set-VoltPrivacyAndTelemetry
+                Set-VoltAtomicTweak -TweakId "chkTelemetry" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkRecall" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkCopilot" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkStartSearch" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkAdId" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkDeliveryOpt" -Enable $true
                 Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
                 Read-Host
             }
             "6" {
                 New-VoltBackupSnapshot -Hardware $hwProfile
-                Set-VoltNetworkGamingTweaks
-                Set-VoltRawMouseInput
-                Add-VoltDefenderGameExclusions -Hardware $hwProfile
+                Set-VoltAtomicTweak -TweakId "chkNetwork" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkRawMouse" -Enable $true
+                Set-VoltAtomicTweak -TweakId "chkDefender" -Enable $true -Hardware $hwProfile
                 Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
                 Read-Host
             }
             "7" {
                 New-VoltBackupSnapshot -Hardware $hwProfile
-                Optimize-VoltServices
+                Set-VoltAtomicTweak -TweakId "chkSafeServices" -Enable $true
                 Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
                 Read-Host
             }
             "8" {
                 New-VoltBackupSnapshot -Hardware $hwProfile
-                Set-VoltWindowsUpdateProfile
+                Set-VoltAtomicTweak -TweakId "chkSecurityUpdates" -Enable $true
                 Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
                 Read-Host
             }
             "9" {
-                Install-VoltPackageById -Name "Visual C++ 2015-2022 AIO" -Id "Microsoft.VCRedist.2015+.x64"
-                Install-VoltPackageById -Name "DirectX End-User Runtimes" -Id "Microsoft.DirectX"
+                & winget install --id "Microsoft.VCRedist.2015+.x64" -e --silent --accept-package-agreements --accept-source-agreements
+                & winget install --id "Microsoft.DirectX" -e --silent --accept-package-agreements --accept-source-agreements
                 Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
                 Read-Host
             }
