@@ -31,19 +31,20 @@ Atau jalankan secara lokal dari direktori repositori:
 
 ---
 
-## 🚀 Fitur Unggulan v3.2 (Universal Ultimate)
+## 🚀 Fitur Unggulan v3.3 (Universal Ultimate)
 
 1. **Modern Native WPF Desktop GUI (Default Mode & In-Window Hub):**
-   - Tampilan antarmuka grafis bertema dark mode dengan kontrol 100% di dalam GUI (tanpa perlu mengetik di terminal).
+   - Tampilan antarmuka grafis modern bergaya Fluent Dark Theme dengan kontrol 100% di dalam GUI (tanpa perlu mengetik di terminal).
    - **Dynamic Live State Inspection**: Checkbox pada tab *Tweaks* otomatis memeriksa dan mencentang konfigurasi yang sudah aktif di Windows Anda saat ini.
-   - **Customizable Preset Controls**: Memilih preset (`Recommended`, `Laptop Gaming`, `Desktop Max`, `Minimal Privacy`) hanya mengubah centang yang direkomendasikan sehingga Anda bebas menyesuaikan sebelum mengeksekusi dengan tombol sticky *Terapkan*.
+   - **Atomic Tweaks Engine & Clean Preset Matrix**: Memilih preset (`Recommended`, `Laptop Gaming`, `Desktop Max`, `Minimal Privacy`) langsung menerapkan matriks pilihan bersih tanpa akumulasi centang lama. Setiap tweak dieksekusi secara granular per-item sesuai centang pilihan Anda.
    - **Sticky Bottom Action Bar**: Tombol aksi utama (*Terapkan*, *Undo*, *Snapshot*, *Install Apps*) dipin di bagian bawah tab sehingga selalu terlihat tanpa tertutup scroll.
-2. **Katalog Software WinGet Komprehensif (Chris Titus Style - 50+ Apps):**
-   - 8 Kategori lengkap: *Game Runtimes (VC++ AIO, DirectX, .NET 8/9, Java), Web Browsers, Gaming & Launchers, Hardware & Monitoring, Dev Tools, System Utilities, Media & Audio, Documents & Office*.
-   - Dilengkapi preset 1-klik (*All Game Runtimes, Gaming Essentials, Developer Suite, Web Browsers, System Utilities*).
-3. **Universal Game Discovery Engine (8-Source Multi-Drive Scanner):**
-   - Memindai game secara dinamis dari Steam (semua drive via `libraryfolders.vdf`), Epic Games Store Manifests (`*.item`), GOG Galaxy, Ubisoft Connect, HoYoPlay (`C:\Program Files\HoYoPlay`, `Star Rail Games`), folder game standalone (`C:\Games\*`, `D:\Games\*`), registry uninstall, serta dokumen game setting (RDR2, The Witcher 3 DX12).
-   - Mendaftarkan seluruh game terdeteksi ke GPU Discrete High Performance di Windows Settings dengan 1-klik.
+2. **Katalog Software WinGet Komprehensif & Live Search (Fresh Install Toolkit):**
+   - 9 Kategori lengkap: *Web Browsers, Game Runtimes & Libraries (VC++ AIO, DirectX, .NET 8), Utilities & Archives (NanaZip, 7-Zip, WinRAR, PowerToys), Gaming Launchers & Overlays (Steam, Epic, EA, GOG, Battle.net, Discord, OBS, RTSS), Hardware Drivers & Tools (NVIDIA App, HWiNFO64, CPU-Z, GPU-Z), Developer Tools (VS Code, Git, PowerShell 7, Windows Terminal, Docker), Social & Communication (Telegram, WhatsApp, Spotify), Media & Creativity, System Maintenance*.
+   - **Live Search Bar**: Filter aplikasi secara instan dan interaktif berdasarkan nama dan ID WinGet saat Anda mengetik.
+3. **Universal Dynamic Game Tuner (Card-Based Auto Generator):**
+   - Memindai game secara dinamis dari Steam (semua drive via `libraryfolders.vdf`), Epic Games Store Manifests (`*.item`), GOG Galaxy, Ubisoft Connect, HoYoPlay, folder game standalone (`C:\Games\*`, `D:\Games\*`), registry uninstall, serta dokumen game setting.
+   - Secara dinamis membuat kartu pengaturan interaktif per-game untuk konfigurasi GPU Discrete High Performance, pengecualian Windows Defender (anti-stutter asset streaming), dan tuning engine.
+   - Dilengkapi tombol **Tambah Game Manual (.exe)** via File Dialog untuk mendaftarkan game portable apa pun.
 4. **TCP/IP Gaming Latency Optimizer (Zero-VPN Harm):**
    - Menonaktifkan Nagle's Algorithm (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) pada adapter fisik (Ethernet & Wi-Fi).
    - **Strict Whitelist Safety Guard:** Menjamin adapter virtual, TAP, dan Palo Alto GlobalProtect (`PanGPS`) dilewati secara aman tanpa merusak koneksi VPN perusahaan.
