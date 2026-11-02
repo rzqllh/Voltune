@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    VoltPlay & Voltune Windows Utility v3.1 - Ultimate Universal Windows Performance, Gaming & System Toolkit
+    VoltPlay & Voltune Windows Utility v3.2 - Ultimate Universal Windows Performance, Gaming & System Toolkit
 .DESCRIPTION
     Toolkit komprehensif optimasi Windows, manajemen kartu grafis dual-GPU (NVIDIA/AMD/Intel),
     penyelarasan setting game anti-stutter dinamis multi-drive, pembersih disk lintas-drive,
@@ -15,6 +15,8 @@
 
 [CmdletBinding()]
 param(
+    [switch]$CLI,
+    [switch]$TUI,
     [switch]$AutoOptimize,
     [switch]$CleanOnly,
     [switch]$UndoOnly,
@@ -23,7 +25,7 @@ param(
 )
 
 # ------------------------------------------------------------------------------
-# 1. ELEVASI HAK AKSES (SELF-ELEVATION)
+# 1. ELEVASI HAK AKSES (SELF-ELEVATION DENGAN PRESERVASI ARGUMEN)
 # ------------------------------------------------------------------------------
 function Test-IsAdmin {
     $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -37,16 +39,22 @@ function Invoke-VoltElevation {
         return
     }
 
-    Write-Host "[!] Voltune memerlukan hak akses Administrator untuk mengonfigurasi registri performa." -ForegroundColor Yellow
+    Write-Host "[!] Voltune memerlukan hak akses Administrator untuk mengonfigurasi performa Windows." -ForegroundColor Yellow
     Write-Host "[*] Meminta izin UAC Administrator..." -ForegroundColor Cyan
     try {
-        $arguments = "-NoProfile -ExecutionPolicy Bypass"
+        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass")
         if ($PSCommandPath) {
-            $arguments += " -File `"$PSCommandPath`""
+            $argList += @("-File", "`"$PSCommandPath`"")
         } else {
-            $arguments += " -Command `"irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex`""
+            $argList += @("-Command", "`"irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex`"")
         }
-        Start-Process powershell.exe -ArgumentList $arguments -Verb RunAs
+
+        # Teruskan argumen jika ada
+        if ($args) {
+            foreach ($a in $args) { $argList += "`"$a`"" }
+        }
+
+        Start-Process powershell.exe -ArgumentList ($argList -join " ") -Verb RunAs
         exit 0
     } catch {
         Write-Error "Gagal meminta izin Administrator: $_"
@@ -57,14 +65,13 @@ function Invoke-VoltElevation {
 # ------------------------------------------------------------------------------
 # 2. KONFIGURASI GLOBAL & PATHS
 # ------------------------------------------------------------------------------
-$Script:VoltVersion = "3.1.0-Universal"
+$Script:VoltVersion = "3.2.0-Universal"
 $Script:AppDataDir  = Join-Path $env:LOCALAPPDATA "Voltune"
 $Script:BackupDir   = Join-Path $Script:AppDataDir "Backups"
 $Script:LogDir      = Join-Path $Script:AppDataDir "Logs"
 
 if (-not (Test-Path $Script:BackupDir)) { New-Item -ItemType Directory -Path $Script:BackupDir -Force | Out-Null }
 if (-not (Test-Path $Script:LogDir)) { New-Item -ItemType Directory -Path $Script:LogDir -Force | Out-Null }
-
 # ------------------------------------------------------------------------------
 # 3. DYNAMIC DETECTION ENGINE (HARDWARE, ENVIRONMENT, DRIVES, & GAMES)
 # ------------------------------------------------------------------------------
@@ -78,62 +85,68 @@ function Get-VoltHardwareProfile {
         CPUArchitecture  = "x64"
 
         # Memory & Power
-        RAM_GB           = 0.0
+        RAM_GB           = 0
+        IsLaptop         = $false
         IsOnBattery      = $false
-        BatteryChargePct = $null
-        HibernateActive  = $false
-        HiberfilSizeGB   = 0.0
+        BatteryChargePct = 100
 
-        # Storage (Multi-Drive)
-        Drives           = [ordered]@{}
+        # GPU
+        DiscreteGPU      = $null
+        IntegratedGPU    = $null
+        AllGPUs          = @()
 
         # Display
         ScreenResolution = "1920x1080"
         ScreenRefreshHz  = 60
-        DynamicFPSCaps   = [ordered]@{}
+        DynamicFPSCaps   = @{
+            TearFreeVRR  = 57
+            HalfRate     = 30
+            BaseHz       = 60
+        }
 
-        # GPU
-        HasNvidiaGPU     = $false
-        HasAmdGPU        = $false
-        HasIntelGPU      = $false
-        DiscreteGPU      = $null
-        IntegratedGPU    = $null
+        # Storage & Drives
+        Drives           = [ordered]@{}
+        HibernateActive  = $false
+        HiberfilSizeGB   = 0
+
+        # System State
         HAGS_Status      = $false
-
-        # System Restore
-        SystemRestoreOnC = $false
-
-        # Game Ecosystem (Dynamic Multi-Platform Discovery)
+        GameMode_Status  = $false
         SteamLibraries   = @()
         DiscoveredGames  = [ordered]@{}
     }
 
-    # 1. CPU Detection
+    # Query CPU
     try {
-        $proc = Get-CimInstance Win32_Processor | Select-Object -First 1
-        if ($proc) {
-            $profile.CPUName = $proc.Name.Trim()
-            $profile.CPUCores = [int]$proc.NumberOfCores
-            $profile.CPUThreads = [int]$proc.NumberOfLogicalProcessors
-            $profile.CPUArchitecture = if ($proc.AddressWidth -eq 64) { "x64" } else { "x86" }
-
-            if ($profile.CPUName -match "1[234]th Gen" -or $profile.CPUName -match "Core Ultra" -or ($profile.CPUThreads -gt ($profile.CPUCores * 1.5) -and $profile.CPUThreads -ne ($profile.CPUCores * 2))) {
+        $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cpu) {
+            $profile.CPUName = $cpu.Name.Trim()
+            $profile.CPUCores = [int]$cpu.NumberOfCores
+            $profile.CPUThreads = [int]$cpu.NumberOfLogicalProcessors
+            $profile.CPUArchitecture = switch ($cpu.Architecture) {
+                9 { "x64" }
+                12 { "ARM64" }
+                default { "x86" }
+            }
+            if ($profile.CPUThreads -gt ($profile.CPUCores * 2) -or ($profile.CPUThreads -ne ($profile.CPUCores * 2) -and $profile.CPUCores -ge 6)) {
                 $profile.IsHybridCPU = $true
             }
         }
     } catch {}
 
-    # 2. RAM & Battery / Power Detection
+    # Query RAM
     try {
-        $cs = Get-CimInstance Win32_ComputerSystem | Select-Object -First 1
-        if ($cs -and $cs.TotalPhysicalMemory) {
-            $profile.RAM_GB = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+        if ($os) {
+            $profile.RAM_GB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
         }
     } catch {}
 
+    # Query Power / Battery
     try {
-        $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+        $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($battery) {
+            $profile.IsLaptop = $true
             $profile.BatteryChargePct = [int]$battery.EstimatedChargeRemaining
             if ($battery.BatteryStatus -eq 1) {
                 $profile.IsOnBattery = $true
@@ -141,150 +154,164 @@ function Get-VoltHardwareProfile {
         }
     } catch {}
 
-    # Check Hibernate status & hiberfil.sys
-    if (Test-Path "C:\hiberfil.sys") {
-        $profile.HibernateActive = $true
+    # Query Display & Refresh Rate
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+        $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+        if ($screen) {
+            $profile.ScreenResolution = "$($screen.Bounds.Width)x$($screen.Bounds.Height)"
+        }
+    } catch {}
+
+    try {
+        $mon = Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorListedSupportedDisplayModes -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($mon -and $mon.CurrentMode) {
+            $hz = [int]$mon.CurrentMode.VerticalRefreshRate
+            if ($hz -gt 0) { $profile.ScreenRefreshHz = $hz }
+        }
+    } catch {}
+
+    if ($profile.ScreenRefreshHz -le 0) {
         try {
-            $item = Get-Item "C:\hiberfil.sys" -Force -ErrorAction SilentlyContinue
-            if ($item) {
-                $profile.HiberfilSizeGB = [math]::Round($item.Length / 1GB, 2)
+            $displayMode = Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($displayMode.CurrentRefreshRate -gt 0) {
+                $profile.ScreenRefreshHz = [int]$displayMode.CurrentRefreshRate
             }
         } catch {}
     }
+    if ($profile.ScreenRefreshHz -le 0) { $profile.ScreenRefreshHz = 60 }
 
-    # Check System Restore status
-    try {
-        $sr = Get-ComputerRestorePoint -ErrorAction SilentlyContinue
-        $profile.SystemRestoreOnC = $true
-    } catch {
-        $profile.SystemRestoreOnC = $false
+    # Dynamic FPS Targets
+    $hz = $profile.ScreenRefreshHz
+    $profile.DynamicFPSCaps = [ordered]@{
+        TearFreeVRR = [math]::Max(30, ($hz - 3))
+        HalfRate    = [math]::Round($hz / 2)
+        BaseHz      = $hz
     }
 
-    # 3. Multi-Drive Storage Detection (All Drives)
+    # Query GPUs (Dual-GPU Recognition)
     try {
-        $disks = Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
-        foreach ($d in $disks) {
+        $gpus = Get-CimInstance -ClassName Win32_VideoController -ErrorAction SilentlyContinue
+        foreach ($g in $gpus) {
+            $name = $g.Name
+            $vram = [math]::Round($g.AdapterRAM / 1GB, 1)
+            $isDiscrete = ($name -match "NVIDIA|RTX|GTX|Radeon RX|Radeon Pro|Arc A") -and ($name -notmatch "Graphics|Integrated|Iris|Vega|Radeon\(TM\)")
+
+            $gpuObj = [ordered]@{
+                Name        = $name
+                DriverVer   = $g.DriverVersion
+                VRAM_GB     = $vram
+                IsDiscrete  = $isDiscrete
+                TGP_W       = $null
+            }
+
+            if ($name -match "NVIDIA") {
+                $nvsmi = Join-Path $env:ProgramFiles "NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+                if (Test-Path $nvsmi) {
+                    try {
+                        $smiOut = & $nvsmi --query-gpu=memory.total,power.limit --format=csv,noheader,nounits 2>$null
+                        if ($smiOut) {
+                            $parts = ($smiOut -split ",") | ForEach-Object { $_.Trim() }
+                            if ($parts.Count -ge 2) {
+                                $vramMB = [double]$parts[0]
+                                $tgpW   = [double]$parts[1]
+                                $gpuObj.VRAM_GB = [math]::Round($vramMB / 1024, 1)
+                                $gpuObj.TGP_W   = [math]::Round($tgpW, 0)
+                            }
+                        }
+                    } catch {}
+                }
+            }
+
+            $profile.AllGPUs += $gpuObj
+            if ($isDiscrete -and -not $profile.DiscreteGPU) {
+                $profile.DiscreteGPU = $gpuObj
+            } elseif (-not $isDiscrete -and -not $profile.IntegratedGPU) {
+                $profile.IntegratedGPU = $gpuObj
+            }
+        }
+    } catch {}
+
+    # Query Drives
+    try {
+        $drives = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue
+        foreach ($d in $drives) {
+            $dev = $d.DeviceID
             $freeGB  = [math]::Round($d.FreeSpace / 1GB, 1)
             $totalGB = [math]::Round($d.Size / 1GB, 1)
-            $label   = if ($d.VolumeName) { $d.VolumeName } else { "Local Disk" }
-            $profile.Drives[$d.DeviceID] = [ordered]@{
-                DeviceID = $d.DeviceID
-                Label    = $label
+            $profile.Drives[$dev] = [ordered]@{
+                DeviceID = $dev
+                Label    = $d.VolumeName
                 FreeGB   = $freeGB
                 TotalGB  = $totalGB
             }
         }
     } catch {}
 
-    # 4. Display & Refresh Rate Calculation
+    # HAGS Status
     try {
-        $videoControllers = Get-CimInstance Win32_VideoController
-        foreach ($vc in $videoControllers) {
-            $gpuName = $vc.Name
-            $ramGB = 0
-            if ($vc.AdapterRAM) {
-                $ramGB = [math]::Round($vc.AdapterRAM / 1GB, 1)
-            }
-
-            if ($gpuName -match "NVIDIA|GeForce|RTX|GTX") {
-                $profile.HasNvidiaGPU = $true
-                $profile.DiscreteGPU = @{ Name = $gpuName; VRAM_GB = $ramGB; Type = "NVIDIA"; TGP_W = $null; Driver = $null }
-            } elseif ($gpuName -match "AMD Radeon.*(RX|XT|M\b|\d{4})") {
-                $profile.HasAmdGPU = $true
-                $profile.DiscreteGPU = @{ Name = $gpuName; VRAM_GB = $ramGB; Type = "AMD"; TGP_W = $null; Driver = $null }
-            } elseif ($gpuName -match "Intel") {
-                $profile.HasIntelGPU = $true
-                if (-not $profile.IntegratedGPU) {
-                    $profile.IntegratedGPU = @{ Name = $gpuName; VRAM_GB = $ramGB; Type = "Intel" }
-                }
-            } elseif ($gpuName -match "Radeon" -and -not $profile.HasAmdGPU) {
-                $profile.HasAmdGPU = $true
-                $profile.IntegratedGPU = @{ Name = $gpuName; VRAM_GB = $ramGB; Type = "AMD" }
-            }
-
-            if ($vc.CurrentRefreshRate -and $vc.CurrentRefreshRate -gt 30) {
-                $profile.ScreenRefreshHz = [int]$vc.CurrentRefreshRate
-            }
-            if ($vc.VideoModeDescription -match "(\d+)\s*x\s*(\d+)") {
-                $profile.ScreenResolution = "$($Matches[1])x$($Matches[2])"
-            }
-        }
-    } catch {}
-
-    # Dynamic Frame Rate Caps Calculation based on Hz and Power State
-    $hz = $profile.ScreenRefreshHz
-    $profile.DynamicFPSCaps["TearFreeVRR"] = [math]::Max(30, ($hz - 3))
-    $profile.DynamicFPSCaps["HalfRate"]    = [math]::Max(30, [int][math]::Floor($hz / 2))
-    $profile.DynamicFPSCaps["BatteryCap"]  = if ($profile.IsOnBattery) { 30 } else { $profile.DynamicFPSCaps["TearFreeVRR"] }
-
-    # Dynamic NVIDIA TGP & Precision VRAM Query via nvidia-smi
-    if ($profile.HasNvidiaGPU) {
-        $nvsmi = "C:\Windows\System32\nvidia-smi.exe"
-        if (Test-Path $nvsmi) {
-            try {
-                $out = & $nvsmi --query-gpu=power.max_limit,memory.total,driver_version --format=csv,noheader,nounits 2>$null
-                if ($out -match "([\d\.]+),\s*([\d\.]+),\s*([\d\.]+)") {
-                    $profile.DiscreteGPU.TGP_W = [int][math]::Round([double]$Matches[1])
-                    $profile.DiscreteGPU.VRAM_GB = [math]::Round(([double]$Matches[2] / 1024), 1)
-                    $profile.DiscreteGPU.Driver = $Matches[3]
-                }
-            } catch {}
-        }
-    }
-
-    # Check HAGS Status from registry
-    try {
-        $hags = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -ErrorAction SilentlyContinue
-        if ($hags -and $hags.HwSchMode -eq 2) {
+        $hagsReg = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -ErrorAction SilentlyContinue
+        if ($hagsReg -and $hagsReg.HwSchMode -eq 2) {
             $profile.HAGS_Status = $true
         }
     } catch {}
 
-    # 5. DYNAMIC MULTI-PLATFORM GAME DISCOVERY
-    $foundSteamLibs = [System.Collections.Generic.List[string]]::new()
-    $steamReg = Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue
-    if ($steamReg -and $steamReg.SteamPath) {
-        $mainSteam = ($steamReg.SteamPath -replace '/', '\')
-        if (Test-Path $mainSteam) {
-            $foundSteamLibs.Add($mainSteam)
-            $vdf = Join-Path $mainSteam "steamapps\libraryfolders.vdf"
-            if (Test-Path $vdf) {
-                Get-Content $vdf | ForEach-Object {
-                    if ($_ -match '^\s*"path"\s+"([^"]+)"') {
-                        $p = ($Matches[1] -replace '\\\\', '\')
-                        if ((Test-Path $p) -and -not $foundSteamLibs.Contains($p)) {
-                            $foundSteamLibs.Add($p)
-                        }
-                    }
+    # Hibernate & Hiberfil.sys
+    try {
+        $hiberReg = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateEnabled" -ErrorAction SilentlyContinue
+        if ($hiberReg -and $hiberReg.HibernateEnabled -eq 1) {
+            $profile.HibernateActive = $true
+            if (Test-Path "C:\hiberfil.sys") {
+                $f = Get-Item "C:\hiberfil.sys" -Force -ErrorAction SilentlyContinue
+                if ($f) {
+                    $profile.HiberfilSizeGB = [math]::Round($f.Length / 1GB, 1)
                 }
+            }
+            if ($profile.HiberfilSizeGB -le 0 -and $profile.RAM_GB -gt 0) {
+                $profile.HiberfilSizeGB = [math]::Round($profile.RAM_GB * 0.4, 1)
+            }
+        }
+    } catch {}
+
+    # --------------------------------------------------------------------------
+    # UNIVERSAL COMPREHENSIVE GAME DISCOVERY (STEAM, EPIC, GOG, HOYO, APPS, DRIVES)
+    # --------------------------------------------------------------------------
+    $steamLibs = [System.Collections.Generic.HashSet[string]]::new()
+    @(
+        "${env:ProgramFiles(x86)}\Steam",
+        "$env:ProgramFiles\Steam"
+    ) | ForEach-Object { if (Test-Path $_) { [void]$steamLibs.Add($_) } }
+
+    $steamReg = (Get-ItemProperty "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue).SteamPath
+    if ($steamReg -and (Test-Path $steamReg)) { [void]$steamLibs.Add($steamReg) }
+
+    foreach ($slib in @($steamLibs)) {
+        $vdf = Join-Path $slib "steamapps\libraryfolders.vdf"
+        if (Test-Path $vdf) {
+            $vdfContent = Get-Content $vdf -Raw -ErrorAction SilentlyContinue
+            $vdfMatches = [regex]::Matches($vdfContent, '"path"\s+"([^"]+)"')
+            foreach ($m in $vdfMatches) {
+                $p = $m.Groups[1].Value.Replace("\\", "\")
+                if (Test-Path $p) { [void]$steamLibs.Add($p) }
             }
         }
     }
 
-    foreach ($d in $profile.Drives.Keys) {
-        $cand = "$d\Games\SteamLibrary"
-        if ((Test-Path $cand) -and -not $foundSteamLibs.Contains($cand)) { $foundSteamLibs.Add($cand) }
-        $cand2 = "$d\SteamLibrary"
-        if ((Test-Path $cand2) -and -not $foundSteamLibs.Contains($cand2)) { $foundSteamLibs.Add($cand2) }
-    }
-    $profile.SteamLibraries = @($foundSteamLibs)
+    $profile.SteamLibraries = @($steamLibs)
 
+    # 1. Steam Games
     foreach ($lib in $profile.SteamLibraries) {
         $appsDir = Join-Path $lib "steamapps"
         if (Test-Path $appsDir) {
             Get-ChildItem -Path $appsDir -Filter "appmanifest_*.acf" -File -ErrorAction SilentlyContinue | ForEach-Object {
                 $txt = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-                $appId = $null
-                $appName = $null
-                $installSub = $null
-
+                $appId = $null; $appName = $null; $installSub = $null
                 if ($txt -match '"appid"\s+"(\d+)"') { $appId = $Matches[1] }
                 if ($txt -match '"name"\s+"([^"]+)"') { $appName = $Matches[1] }
                 if ($txt -match '"installdir"\s+"([^"]+)"') { $installSub = $Matches[1] }
-
                 if ($appId -and $appName -and $installSub) {
-                    $fullPath = Join-Path $appsDir "common\$installSub"
                     if ($appName -notmatch "Steamworks|Redistributable|Proton|Shared") {
+                        $fullPath = Join-Path $appsDir "common\$installSub"
                         $profile.DiscoveredGames["Steam_$appId"] = [ordered]@{
                             Name        = $appName
                             Platform    = "Steam"
@@ -297,7 +324,54 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # HoYoPlay
+    # 2. Epic Games Store Manifests
+    $epicManifests = "C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests"
+    if (Test-Path $epicManifests) {
+        Get-ChildItem -Path $epicManifests -Filter "*.item" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $j = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+                if ($j.DisplayName -and $j.InstallLocation) {
+                    $profile.DiscoveredGames["Epic_$($j.AppName)"] = [ordered]@{
+                        Name        = $j.DisplayName
+                        Platform    = "Epic Games"
+                        InstallPath = $j.InstallLocation
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    # 3. GOG Galaxy Registry
+    $gogReg = "HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games"
+    if (Test-Path $gogReg) {
+        Get-ChildItem -Path $gogReg -ErrorAction SilentlyContinue | ForEach-Object {
+            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            if ($p.gameName -and $p.path) {
+                $profile.DiscoveredGames["GOG_$($_.PSChildName)"] = [ordered]@{
+                    Name        = $p.gameName
+                    Platform    = "GOG"
+                    InstallPath = $p.path
+                }
+            }
+        }
+    }
+
+    # 4. Ubisoft Connect
+    $ubiReg = "HKLM:\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs"
+    if (Test-Path $ubiReg) {
+        Get-ChildItem -Path $ubiReg -ErrorAction SilentlyContinue | ForEach-Object {
+            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            if ($p.InstallDir) {
+                $profile.DiscoveredGames["Ubisoft_$($_.PSChildName)"] = [ordered]@{
+                    Name        = "Ubisoft Game ($($_.PSChildName))"
+                    Platform    = "Ubisoft"
+                    InstallPath = $p.InstallDir
+                }
+            }
+        }
+    }
+
+    # 5. HoYoPlay (Cognosphere)
     $hoyoReg = "HKCU:\Software\Cognosphere"
     if (Test-Path $hoyoReg) {
         Get-ChildItem -Path $hoyoReg -ErrorAction SilentlyContinue | ForEach-Object {
@@ -314,11 +388,43 @@ function Get-VoltHardwareProfile {
                     Platform = "HoYoPlay"
                     RegPath  = $_.Name
                 }
+            } elseif ($gameKey -match "Zenless|ZZZ") {
+                $profile.DiscoveredGames["HoYo_ZZZ"] = [ordered]@{
+                    Name     = "Zenless Zone Zero"
+                    Platform = "HoYoPlay"
+                    RegPath  = $_.Name
+                }
             }
         }
     }
 
-    # Rockstar
+    # 6. Common Games Folders on all active drives (e.g. C:\Games, D:\Games, E:\Games)
+    $allDrives = Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root
+    foreach ($d in $allDrives) {
+        $gamesDir = Join-Path $d "Games"
+        if (Test-Path $gamesDir) {
+            Get-ChildItem -Path $gamesDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $folderName = $_.Name
+                if ($folderName -notmatch "Mods") {
+                    $exe = Get-ChildItem -Path $_.FullName -Filter "*.exe" -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notmatch "Crash|unins|setup|patch|UnityCrashHandler" } | Select-Object -First 1
+                    if ($exe) {
+                        $id = "Folder_$($folderName -replace '[^a-zA-Z0-9]', '')"
+                        if (-not $profile.DiscoveredGames.Contains($id)) {
+                            $profile.DiscoveredGames[$id] = [ordered]@{
+                                Name        = $folderName
+                                Platform    = "PC / Standalone"
+                                InstallPath = $_.FullName
+                                ExePath     = $exe.FullName
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # 7. Rockstar & CDPR Configs in Documents
     $rdr2Doc = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "Rockstar Games\Red Dead Redemption 2\Settings\system.xml"
     if (Test-Path $rdr2Doc) {
         $profile.DiscoveredGames["Rockstar_RDR2"] = [ordered]@{
@@ -328,7 +434,6 @@ function Get-VoltHardwareProfile {
         }
     }
 
-    # CDPR
     $w3Doc = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "The Witcher 3\dx12user.settings"
     if (Test-Path $w3Doc) {
         $profile.DiscoveredGames["CDPR_W3"] = [ordered]@{
@@ -338,10 +443,130 @@ function Get-VoltHardwareProfile {
         }
     }
 
+    # 8. Installed Games Registry (Uninstall Keys)
+    $uninstallRoots = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue | ForEach-Object {
+        $disp = $_.DisplayName
+        $loc  = $_.InstallLocation
+        if ($disp -and ($disp -notmatch "Security|Update|Service|Driver|Redistributable|SDK|Runtime|Tool|Prerequisite|Headers|Contracts")) {
+            if ($loc -and ($loc -match "Game|Games|Steam|Epic|Riot|HoYo|Gryphlink|Roblox|Witcher|Cyberpunk|Rockstar")) {
+                $id = "App_" + ($disp -replace '[^a-zA-Z0-9]', '')
+                if (-not $profile.DiscoveredGames.Contains($id)) {
+                    $profile.DiscoveredGames[$id] = [ordered]@{
+                        Name        = $disp
+                        Platform    = if ($_.Publisher) { $_.Publisher } else { "Installed Game" }
+                        InstallPath = $loc
+                    }
+                }
+            }
+        }
+    }
+
     return $profile
 }
 
 # ------------------------------------------------------------------------------
+# 3B. LIVE WINDOWS TWEAKS STATE INSPECTOR (REFLEKSI KONFIGURASI SAAT INI)
+# ------------------------------------------------------------------------------
+function Get-VoltWindowsTweakState {
+    $state = @{}
+
+    # HAGS
+    $hags = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -ErrorAction SilentlyContinue).HwSchMode
+    $state["chkHags"] = ($hags -eq 2)
+
+    # Windows Game Mode
+    $gm = (Get-ItemProperty "HKCU:\Software\Microsoft\GameBar" -Name "AutoGameModeEnabled" -ErrorAction SilentlyContinue).AutoGameModeEnabled
+    $state["chkGameMode"] = ($gm -eq 1)
+
+    # Background GameDVR Off
+    $dvr = (Get-ItemProperty "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -ErrorAction SilentlyContinue).GameDVR_Enabled
+    $state["chkGameDVR"] = ($dvr -eq 0)
+
+    # 1:1 Raw Mouse Input
+    $ms = (Get-ItemProperty "HKCU:\Control Panel\Mouse" -Name "MouseSpeed" -ErrorAction SilentlyContinue).MouseSpeed
+    $state["chkRawMouse"] = ($ms -eq "0")
+
+    # Defender Game Exclusion
+    $pref = Get-MpPreference -ErrorAction SilentlyContinue
+    $hasExcl = $false
+    if ($pref -and $pref.ExclusionPath) {
+        foreach ($ep in $pref.ExclusionPath) {
+            if ($ep -match "Steam|Games|HoYo|Epic") { $hasExcl = $true; break }
+        }
+    }
+    $state["chkDefender"] = $hasExcl
+
+    # TCP/IP Gaming Latency
+    $tcpNet = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces" -ErrorAction SilentlyContinue |
+        Where-Object { (Get-ItemProperty $_.PSPath -Name "TcpAckFrequency" -ErrorAction SilentlyContinue).TcpAckFrequency -eq 1 }
+    $state["chkNetwork"] = ($null -ne $tcpNet)
+
+    # Power Throttling Off
+    $pt = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling" -Name "PowerThrottlingOff" -ErrorAction SilentlyContinue).PowerThrottlingOff
+    $state["chkPowerThrottle"] = ($pt -eq 1)
+
+    # Safe Services (DiagTrack disabled)
+    $diag = Get-Service -Name "DiagTrack" -ErrorAction SilentlyContinue
+    $state["chkSafeServices"] = ($diag -and $diag.StartType -eq "Disabled")
+
+    # Security Updates Only / Driver hijack block
+    $wu = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "ExcludeWUDriversInQualityUpdate" -ErrorAction SilentlyContinue).ExcludeWUDriversInQualityUpdate
+    $state["chkSecurityUpdates"] = ($wu -eq 1)
+
+    # Classic Context Menu
+    $state["chkClassicMenu"] = (Test-Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32")
+
+    # File Extensions
+    $hfe = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -ErrorAction SilentlyContinue).HideFileExt
+    $state["chkFileExt"] = ($hfe -eq 0)
+
+    # Open Explorer to This PC
+    $lt = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "LaunchTo" -ErrorAction SilentlyContinue).LaunchTo
+    $state["chkThisPC"] = ($lt -eq 1)
+
+    # Show Hidden Files
+    $hf = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -ErrorAction SilentlyContinue).Hidden
+    $state["chkHiddenFiles"] = ($hf -eq 1)
+
+    # Clean Taskbar (TaskbarDa=0)
+    $tda = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -ErrorAction SilentlyContinue).TaskbarDa
+    $state["chkCleanTaskbar"] = ($tda -eq 0)
+
+    # Clean Quick Access (ShowFrequent=0)
+    $sf = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "ShowFrequent" -ErrorAction SilentlyContinue).ShowFrequent
+    $state["chkCleanQuickAccess"] = ($sf -eq 0)
+
+    # Telemetry Minimum (AllowTelemetry=0)
+    $at = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -ErrorAction SilentlyContinue).AllowTelemetry
+    $state["chkTelemetry"] = ($at -eq 0)
+
+    # Recall AI Off
+    $rec = (Get-ItemProperty "HKCU:\Software\Policies\Microsoft\Windows\WindowsAI" -Name "DisableAIDataAnalysis" -ErrorAction SilentlyContinue).DisableAIDataAnalysis
+    $state["chkRecall"] = ($rec -eq 1)
+
+    # Copilot Off
+    $cop = (Get-ItemProperty "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -ErrorAction SilentlyContinue).TurnOffWindowsCopilot
+    $state["chkCopilot"] = ($cop -eq 1)
+
+    # Start Bing Search Off
+    $bse = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -ErrorAction SilentlyContinue).BingSearchEnabled
+    $state["chkStartSearch"] = ($bse -eq 0)
+
+    # Advertising ID Off
+    $adid = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    $state["chkAdId"] = ($adid -eq 0)
+
+    # Delivery Optimization P2P Off
+    $do = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" -Name "DODownloadMode" -ErrorAction SilentlyContinue).DODownloadMode
+    $state["chkDeliveryOpt"] = ($do -eq 0)
+
+    return $state
+}
 # 4. SAFETY & SYSTEM RESTORE POINT AUTOMATION
 # ------------------------------------------------------------------------------
 function New-VoltRestorePoint {
@@ -1300,6 +1525,7 @@ function Reset-VoltNetwork {
 }
 
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # 20. MODERN NATIVE WPF GUI WINDOW (100% IN-GUI EXPERIENCE, ZERO CLI REQUIRED)
 # ------------------------------------------------------------------------------
 function Show-VoltGUI {
@@ -1312,7 +1538,8 @@ function Show-VoltGUI {
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Voltune Ultimate Toolkit v$Script:VoltVersion" Height="740" Width="1040"
+        Title="Voltune Ultimate Toolkit v$Script:VoltVersion" Height="780" Width="1100"
+        MinHeight="650" MinWidth="900"
         WindowStartupLocation="CenterScreen" Background="#0F172A" FontFamily="Segoe UI">
     <Window.Resources>
         <Style TargetType="Button">
@@ -1326,7 +1553,7 @@ function Show-VoltGUI {
         <Style TargetType="TabItem">
             <Setter Property="Background" Value="#1E293B"/>
             <Setter Property="Foreground" Value="#94A3B8"/>
-            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Padding" Value="14,9"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
@@ -1334,6 +1561,7 @@ function Show-VoltGUI {
             <Setter Property="Foreground" Value="#F8FAFC"/>
             <Setter Property="Margin" Value="0,5"/>
             <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
         </Style>
     </Window.Resources>
 
@@ -1370,7 +1598,7 @@ function Show-VoltGUI {
                                 <TextBlock Text="Sumber Daya: $(if ($Hardware.IsOnBattery) { 'Baterai (' + $Hardware.BatteryChargePct + '%) [Hemat Daya]' } else { 'AC Adapter (Daya Maksimal)' })" Foreground="$(if ($Hardware.IsOnBattery) { '#FBBF24' } else { '#34D399' })" Margin="0,3"/>
                                 <TextBlock Text="Layar: $($Hardware.ScreenResolution) @ $($Hardware.ScreenRefreshHz) Hz | Target FPS: VRR $($Hardware.DynamicFPSCaps.TearFreeVRR) FPS" Foreground="#F8FAFC" Margin="0,3"/>
                                 <TextBlock Text="Memori RAM: $($Hardware.RAM_GB) GB | HAGS: $(if ($Hardware.HAGS_Status) { 'Aktif' } else { 'Nonaktif' }) | Hibernasi: $(if ($Hardware.HibernateActive) { 'Aktif (~' + $Hardware.HiberfilSizeGB + ' GB)' } else { 'Nonaktif' })" Foreground="#F8FAFC" Margin="0,3"/>
-                                <TextBlock Text="Game Terdeteksi: $($Hardware.DiscoveredGames.Count) Game Lintas-Platform" Foreground="#A78BFA" Margin="0,3"/>
+                                <TextBlock Text="Game Terdeteksi: $($Hardware.DiscoveredGames.Count) Game Lintas-Platform (Steam, Epic, GOG, HoYoPlay, Standalone)" Foreground="#A78BFA" Margin="0,3"/>
                             </StackPanel>
                         </Border>
 
@@ -1378,7 +1606,7 @@ function Show-VoltGUI {
                         <WrapPanel Margin="0,0,0,10">
                             <Button Name="btnDashSnapshot" Content="📸 Buat Snapshot VoltUndo" Margin="0,0,8,8" Height="34"/>
                             <Button Name="btnDashRestorePoint" Content="🛡️ Buat System Restore Point" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnDashToggleHiber" Content="💾 Toggle Hibernasi (~6.3 GB)" Margin="0,0,8,8" Height="34"/>
+                            <Button Name="btnDashToggleHiber" Content="💾 Toggle Hibernasi (~$($Hardware.HiberfilSizeGB) GB)" Margin="0,0,8,8" Height="34"/>
                             <Button Name="btnDashPowerUlt" Content="⚡ Power: Ultimate" Margin="0,0,8,8" Height="34"/>
                             <Button Name="btnDashPowerBal" Content="⚖️ Power: Balanced" Margin="0,0,8,8" Height="34"/>
                         </WrapPanel>
@@ -1388,212 +1616,392 @@ function Show-VoltGUI {
 
             <!-- TAB 2: TWEAKS (CHRIS TITUS STYLE CUSTOMIZATION & PRESETS) -->
             <TabItem Header="Tweaks">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="15">
-                        <TextBlock Text="Pilih Preset Konfigurasi (Klik untuk memilih rekomendasi, lalu customize bebas):" FontSize="14" Foreground="#94A3B8" Margin="0,0,0,8"/>
-                        <WrapPanel Margin="0,0,0,15">
-                            <Button Name="btnPresetRecommended" Content="🎯 Recommended Preset" Background="#0284C7" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnPresetLaptop" Content="💻 Laptop Gaming Preset" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnPresetDesktop" Content="🖥️ Desktop Max Preset" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnPresetMinimal" Content="🧹 Minimal Privacy Preset" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnPresetClear" Content="❌ Clear All" Margin="0,0,8,8" Height="34"/>
-                        </WrapPanel>
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                        <!-- Tweaks Grid -->
-                        <Grid Margin="0,0,0,15">
+                    <!-- Row 0: Presets Toolbar -->
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="Pilih Preset Konfigurasi (Klik untuk memilih rekomendasi, lalu customize bebas):" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,8"/>
+                            <WrapPanel>
+                                <Button Name="btnPresetRecommended" Content="🎯 Recommended Preset" Background="#0284C7" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnPresetLaptop" Content="💻 Laptop Gaming Preset" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnPresetDesktop" Content="🖥️ Desktop Max Preset" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnPresetMinimal" Content="🛡️ Minimal Privacy Preset" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnLiveState" Content="🔄 Status Windows Saat Ini" Background="#047857" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnPresetClear" Content="❌ Clear All" Margin="0,0,8,6" Height="32"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Row 1: ScrollViewer with Category Cards -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
                             <!-- Column 1 -->
-                            <StackPanel Grid.Column="0" Margin="0,0,10,0">
-                                <TextBlock Text="⚡ Gaming &amp; Performa Hardware" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
-                                <CheckBox Name="chkHags" Content="Hardware-Accelerated GPU Scheduling (HAGS)" IsChecked="True"/>
-                                <CheckBox Name="chkGameMode" Content="Windows Game Mode &amp; MMCSS Low Latency Audio" IsChecked="True"/>
-                                <CheckBox Name="chkGameDVR" Content="Matikan Background GameDVR (Bebaskan Overhead GPU)" IsChecked="True"/>
-                                <CheckBox Name="chkRawMouse" Content="1:1 Raw Mouse Input (Matikan Akselerasi Mouse)" IsChecked="True"/>
-                                <CheckBox Name="chkDefender" Content="Daftarkan Library Game ke Defender Exclusion (Anti-Stutter)" IsChecked="True"/>
-                                <CheckBox Name="chkNetwork" Content="TCP/IP Gaming Latency Optimizer (Zero-VPN Harm)" IsChecked="True"/>
-                                <CheckBox Name="chkPowerThrottle" Content="Matikan CPU Power Throttling Execution (Max Clock)" IsChecked="False"/>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="⚡ Gaming &amp; Performa Hardware" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                        <CheckBox Name="chkHags" Content="Hardware-Accelerated GPU Scheduling (HAGS)"/>
+                                        <CheckBox Name="chkGameMode" Content="Windows Game Mode &amp; MMCSS Low Latency Audio"/>
+                                        <CheckBox Name="chkGameDVR" Content="Matikan Background GameDVR (Bebaskan Overhead GPU)"/>
+                                        <CheckBox Name="chkRawMouse" Content="1:1 Raw Mouse Input (Matikan Akselerasi Mouse)"/>
+                                        <CheckBox Name="chkDefender" Content="Daftarkan Library Game ke Defender Exclusion (Anti-Stutter)"/>
+                                        <CheckBox Name="chkNetwork" Content="TCP/IP Gaming Latency Optimizer (Zero-VPN Harm)"/>
+                                        <CheckBox Name="chkPowerThrottle" Content="Matikan CPU Power Throttling Execution (Max Clock)"/>
+                                    </StackPanel>
+                                </Border>
 
-                                <TextBlock Text="🔒 Layanan &amp; Update Sistem" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,15,0,8"/>
-                                <CheckBox Name="chkSafeServices" Content="Safe Gaming Services (Matikan DiagTrack, WAP, Maps)" IsChecked="True"/>
-                                <CheckBox Name="chkSecurityUpdates" Content="Windows Update: Security Updates Only (Anti Driver Hijack)" IsChecked="True"/>
+                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="🔒 Layanan &amp; Update Sistem" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                        <CheckBox Name="chkSafeServices" Content="Safe Gaming Services (Matikan DiagTrack, WAP, Maps)"/>
+                                        <CheckBox Name="chkSecurityUpdates" Content="Windows Update: Security Updates Only (Anti Driver Hijack)"/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
 
                             <!-- Column 2 -->
-                            <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                                <TextBlock Text="🛠️ Windows 11 Quality of Life (QoL)" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
-                                <CheckBox Name="chkClassicMenu" Content="Classic Context Menu (Klik Kanan Penuh Windows 10)" IsChecked="True"/>
-                                <CheckBox Name="chkFileExt" Content="Tampilkan Ekstensi File (.exe, .ps1, dll)" IsChecked="True"/>
-                                <CheckBox Name="chkThisPC" Content="Buka File Explorer langsung ke 'This PC'" IsChecked="True"/>
-                                <CheckBox Name="chkHiddenFiles" Content="Tampilkan File Tersembunyi (Hidden Files)" IsChecked="True"/>
-                                <CheckBox Name="chkCleanTaskbar" Content="Bersihkan Taskbar (Sembunyikan Widgets RAM, Copilot)" IsChecked="True"/>
-                                <CheckBox Name="chkCleanQuickAccess" Content="Bersihkan Clutter Quick Access (Recent &amp; Frequent Folders)" IsChecked="True"/>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="🛠️ Windows 11 Quality of Life (QoL)" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                        <CheckBox Name="chkClassicMenu" Content="Classic Context Menu (Klik Kanan Penuh Windows 10)"/>
+                                        <CheckBox Name="chkFileExt" Content="Tampilkan Ekstensi File (.exe, .ps1, dll)"/>
+                                        <CheckBox Name="chkThisPC" Content="Buka File Explorer langsung ke 'This PC'"/>
+                                        <CheckBox Name="chkHiddenFiles" Content="Tampilkan File Tersembunyi (Hidden Files)"/>
+                                        <CheckBox Name="chkCleanTaskbar" Content="Bersihkan Taskbar (Sembunyikan Widgets RAM, Copilot)"/>
+                                        <CheckBox Name="chkCleanQuickAccess" Content="Bersihkan Clutter Quick Access (Recent &amp; Frequent Folders)"/>
+                                    </StackPanel>
+                                </Border>
 
-                                <TextBlock Text="🛡️ Privasi &amp; Anti-Telemetri" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,15,0,8"/>
-                                <CheckBox Name="chkTelemetry" Content="Windows Telemetry Level Minimum (Level 0)" IsChecked="True"/>
-                                <CheckBox Name="chkRecall" Content="Matikan Windows Recall AI Snapshot (Win11 24H2)" IsChecked="True"/>
-                                <CheckBox Name="chkCopilot" Content="Matikan Copilot System-Wide" IsChecked="True"/>
-                                <CheckBox Name="chkStartSearch" Content="Matikan Bing Search &amp; Ads di Start Menu" IsChecked="True"/>
-                                <CheckBox Name="chkAdId" Content="Matikan Advertising ID &amp; Activity History" IsChecked="True"/>
-                                <CheckBox Name="chkDeliveryOpt" Content="Matikan Delivery Optimization P2P Upload" IsChecked="True"/>
+                                <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="🛡️ Privasi &amp; Anti-Telemetri" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                        <CheckBox Name="chkTelemetry" Content="Windows Telemetry Level Minimum (Level 0)"/>
+                                        <CheckBox Name="chkRecall" Content="Matikan Windows Recall AI Snapshot (Win11 24H2)"/>
+                                        <CheckBox Name="chkCopilot" Content="Matikan Copilot System-Wide"/>
+                                        <CheckBox Name="chkStartSearch" Content="Matikan Bing Search &amp; Ads di Start Menu"/>
+                                        <CheckBox Name="chkAdId" Content="Matikan Advertising ID &amp; Activity History"/>
+                                        <CheckBox Name="chkDeliveryOpt" Content="Matikan Delivery Optimization P2P Upload"/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </Grid>
+                    </ScrollViewer>
 
-                        <Separator Background="#334155" Margin="0,10,0,15"/>
-                        <WrapPanel>
-                            <Button Name="btnRunSelectedTweaks" Content="🚀 Terapkan Seluruh Tweaks Terpilih" Background="#0284C7" Height="38" Margin="0,0,10,0" Padding="15,0"/>
-                            <Button Name="btnUndoSelectedTweaks" Content="↩️ Undo / Kembalikan Tweaks Terpilih" Background="#475569" Height="38" Padding="15,0"/>
-                        </WrapPanel>
-                    </StackPanel>
-                </ScrollViewer>
+                    <!-- Row 2: Sticky Bottom Action Bar -->
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                        <DockPanel LastChildFill="False">
+                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                <Button Name="btnRunSelectedTweaks" Content="🚀 Terapkan Seluruh Tweaks Terpilih" Background="#0284C7" Height="38" Padding="16,0" Margin="0,0,10,0"/>
+                                <Button Name="btnUndoSelectedTweaks" Content="↩️ Undo / Revert Tweaks Terpilih" Background="#475569" Height="38" Padding="14,0" Margin="0,0,10,0"/>
+                                <Button Name="btnQuickSnapshot" Content="📸 Buat Snapshot VoltUndo" Height="38" Padding="12,0"/>
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="Centang tweak yang ingin diubah, lalu klik Terapkan." Foreground="#94A3B8" VerticalAlignment="Center" FontSize="12"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </TabItem>
 
-            <!-- TAB 3: INSTALL APPS (WINGET MULTI-SELECT CATALOG) -->
+            <!-- TAB 3: INSTALL APPS (WINGET COMPREHENSIVE CATALOG) -->
             <TabItem Header="Install Apps">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="15">
-                        <TextBlock Text="Pilih Preset Software (Atau centang software yang diinginkan di bawah):" FontSize="14" Foreground="#94A3B8" Margin="0,0,0,8"/>
-                        <WrapPanel Margin="0,0,0,12">
-                            <Button Name="btnAppsRuntimes" Content="📦 All Game Runtimes" Background="#0284C7" Margin="0,0,8,8" Height="32"/>
-                            <Button Name="btnAppsGaming" Content="🎮 Gaming Bundle" Margin="0,0,8,8" Height="32"/>
-                            <Button Name="btnAppsDev" Content="💻 Dev Tools Bundle" Margin="0,0,8,8" Height="32"/>
-                            <Button Name="btnAppsBrowsers" Content="🌐 Web Browsers" Margin="0,0,8,8" Height="32"/>
-                            <Button Name="btnAppsClear" Content="❌ Clear Selection" Margin="0,0,8,8" Height="32"/>
-                        </WrapPanel>
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                        <!-- Apps 3-Column Grid -->
-                        <Grid Margin="0,0,0,15">
+                    <!-- Row 0: Apps Presets Toolbar -->
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="Pilih Preset Software (Atau centang software yang diinginkan di bawah):" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,8"/>
+                            <WrapPanel>
+                                <Button Name="btnAppsRuntimes" Content="📦 All Game Runtimes" Background="#0284C7" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsGaming" Content="🎮 Gaming Essentials" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsDev" Content="💻 Developer Suite" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsBrowsers" Content="🌐 Web Browsers" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsUtilities" Content="🛠️ System Utilities" Margin="0,0,8,6" Height="32"/>
+                                <Button Name="btnAppsClear" Content="❌ Clear Selection" Margin="0,0,8,6" Height="32"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Row 1: ScrollViewer with Categorized App Cards -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- Column 1: Runtimes & Gaming -->
-                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                <TextBlock Text="📦 Runtimes Wajib Game" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                                <CheckBox Name="chkApp_VCRedist" Content="Visual C++ 2015-2022 AIO" IsChecked="True"/>
-                                <CheckBox Name="chkApp_DirectX" Content="DirectX End-User Runtimes" IsChecked="True"/>
-                                <CheckBox Name="chkApp_DotNet" Content=".NET Desktop Runtime 8" IsChecked="True"/>
+                            <!-- Column 1: Runtimes & Browsers -->
+                            <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="📦 Game Runtimes" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_VCRedist" Content="Visual C++ 2015-2022"/>
+                                        <CheckBox Name="chkApp_DirectX" Content="DirectX End-User Runtimes"/>
+                                        <CheckBox Name="chkApp_DotNet8" Content=".NET 8 Desktop Runtime"/>
+                                        <CheckBox Name="chkApp_DotNet9" Content=".NET 9 Desktop Runtime"/>
+                                        <CheckBox Name="chkApp_Java" Content="Oracle Java JRE"/>
+                                        <CheckBox Name="chkApp_OpenAL" Content="OpenAL Audio Engine"/>
+                                    </StackPanel>
+                                </Border>
 
-                                <TextBlock Text="🎮 Gaming &amp; Launchers" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,12,0,6"/>
-                                <CheckBox Name="chkApp_Steam" Content="Steam"/>
-                                <CheckBox Name="chkApp_Epic" Content="Epic Games Launcher"/>
-                                <CheckBox Name="chkApp_Discord" Content="Discord"/>
-                                <CheckBox Name="chkApp_OBS" Content="OBS Studio"/>
-                                <CheckBox Name="chkApp_RTSS" Content="RivaTuner Statistics (RTSS)"/>
-                                <CheckBox Name="chkApp_Afterburner" Content="MSI Afterburner"/>
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="🌐 Web Browsers" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_Brave" Content="Brave Browser"/>
+                                        <CheckBox Name="chkApp_Chrome" Content="Google Chrome"/>
+                                        <CheckBox Name="chkApp_Firefox" Content="Mozilla Firefox"/>
+                                        <CheckBox Name="chkApp_Thorium" Content="Thorium Browser"/>
+                                        <CheckBox Name="chkApp_Librewolf" Content="LibreWolf"/>
+                                        <CheckBox Name="chkApp_Edge" Content="Microsoft Edge"/>
+                                        <CheckBox Name="chkApp_OperaGX" Content="Opera GX"/>
+                                        <CheckBox Name="chkApp_Vivaldi" Content="Vivaldi"/>
+                                        <CheckBox Name="chkApp_Floorp" Content="Floorp Browser"/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
 
-                            <!-- Column 2: Dev Tools -->
-                            <StackPanel Grid.Column="1" Margin="4,0,4,0">
-                                <TextBlock Text="💻 Development &amp; Tools" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                                <CheckBox Name="chkApp_VSCode" Content="Visual Studio Code"/>
-                                <CheckBox Name="chkApp_Git" Content="Git for Windows"/>
-                                <CheckBox Name="chkApp_Terminal" Content="Windows Terminal"/>
-                                <CheckBox Name="chkApp_Node" Content="Node.js LTS"/>
-                                <CheckBox Name="chkApp_Python" Content="Python 3.12"/>
-                                <CheckBox Name="chkApp_7Zip" Content="7-Zip"/>
+                            <!-- Column 2: Gaming & Hardware -->
+                            <StackPanel Grid.Column="1" Margin="3,0,3,0">
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="🎮 Gaming &amp; Launchers" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_Steam" Content="Steam"/>
+                                        <CheckBox Name="chkApp_Epic" Content="Epic Games Launcher"/>
+                                        <CheckBox Name="chkApp_Discord" Content="Discord"/>
+                                        <CheckBox Name="chkApp_OBS" Content="OBS Studio"/>
+                                        <CheckBox Name="chkApp_EA" Content="EA Desktop"/>
+                                        <CheckBox Name="chkApp_Ubisoft" Content="Ubisoft Connect"/>
+                                        <CheckBox Name="chkApp_GOG" Content="GOG Galaxy"/>
+                                        <CheckBox Name="chkApp_BattleNet" Content="Battle.net"/>
+                                        <CheckBox Name="chkApp_Prism" Content="Prism Launcher (MC)"/>
+                                        <CheckBox Name="chkApp_Heroic" Content="Heroic Games Launcher"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="⚡ Hardware &amp; Monitoring" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_Afterburner" Content="MSI Afterburner"/>
+                                        <CheckBox Name="chkApp_RTSS" Content="RivaTuner (RTSS)"/>
+                                        <CheckBox Name="chkApp_CPUZ" Content="CPUID CPU-Z"/>
+                                        <CheckBox Name="chkApp_GPUZ" Content="TechPowerUp GPU-Z"/>
+                                        <CheckBox Name="chkApp_HWMonitor" Content="CPUID HWMonitor"/>
+                                        <CheckBox Name="chkApp_HWiNFO" Content="REALiX HWiNFO"/>
+                                        <CheckBox Name="chkApp_DiskInfo" Content="CrystalDiskInfo"/>
+                                        <CheckBox Name="chkApp_DiskMark" Content="CrystalDiskMark"/>
+                                        <CheckBox Name="chkApp_FanControl" Content="Fan Control"/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
 
-                            <!-- Column 3: Utilities & Browsers -->
-                            <StackPanel Grid.Column="2" Margin="8,0,0,0">
-                                <TextBlock Text="🌐 Web Browsers" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                                <CheckBox Name="chkApp_Brave" Content="Brave Browser"/>
-                                <CheckBox Name="chkApp_Chrome" Content="Google Chrome"/>
-                                <CheckBox Name="chkApp_Firefox" Content="Mozilla Firefox"/>
+                            <!-- Column 3: Dev Tools & Media -->
+                            <StackPanel Grid.Column="2" Margin="3,0,3,0">
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="💻 Development &amp; Tools" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_VSCode" Content="Visual Studio Code"/>
+                                        <CheckBox Name="chkApp_Git" Content="Git for Windows"/>
+                                        <CheckBox Name="chkApp_Terminal" Content="Windows Terminal"/>
+                                        <CheckBox Name="chkApp_Node" Content="Node.js LTS"/>
+                                        <CheckBox Name="chkApp_Python" Content="Python 3.12"/>
+                                        <CheckBox Name="chkApp_Docker" Content="Docker Desktop"/>
+                                        <CheckBox Name="chkApp_Postman" Content="Postman"/>
+                                        <CheckBox Name="chkApp_PowerToys" Content="Microsoft PowerToys"/>
+                                        <CheckBox Name="chkApp_NotepadPP" Content="Notepad++"/>
+                                        <CheckBox Name="chkApp_DBeaver" Content="DBeaver Universal DB"/>
+                                    </StackPanel>
+                                </Border>
 
-                                <TextBlock Text="🔧 System Utilities" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,12,0,6"/>
-                                <CheckBox Name="chkApp_Everything" Content="Everything Search"/>
-                                <CheckBox Name="chkApp_VLC" Content="VLC Media Player"/>
-                                <CheckBox Name="chkApp_HWMonitor" Content="CPUID HWMonitor"/>
-                                <CheckBox Name="chkApp_BleachBit" Content="BleachBit Cleaner"/>
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="🎬 Media &amp; Audio" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_VLC" Content="VLC Media Player"/>
+                                        <CheckBox Name="chkApp_MPV" Content="MPV Player"/>
+                                        <CheckBox Name="chkApp_Spotify" Content="Spotify"/>
+                                        <CheckBox Name="chkApp_Audacity" Content="Audacity"/>
+                                        <CheckBox Name="chkApp_HandBrake" Content="HandBrake Transcoder"/>
+                                        <CheckBox Name="chkApp_KLite" Content="K-Lite Codec Pack"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Column 4: System Utilities & Docs -->
+                            <StackPanel Grid.Column="3" Margin="6,0,0,0">
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Text="🛠️ System Utilities" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_7Zip" Content="7-Zip Archiver"/>
+                                        <CheckBox Name="chkApp_WinRAR" Content="WinRAR"/>
+                                        <CheckBox Name="chkApp_Everything" Content="Everything Search"/>
+                                        <CheckBox Name="chkApp_ShareX" Content="ShareX Screen Capture"/>
+                                        <CheckBox Name="chkApp_BleachBit" Content="BleachBit Cleaner"/>
+                                        <CheckBox Name="chkApp_Revo" Content="Revo Uninstaller"/>
+                                        <CheckBox Name="chkApp_WizTree" Content="WizTree Disk Analyzer"/>
+                                        <CheckBox Name="chkApp_Rufus" Content="Rufus USB Tool"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Background="#0F172A" CornerRadius="6" Padding="10" BorderBrush="#334155" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="📄 Documents &amp; Office" FontSize="13" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                                        <CheckBox Name="chkApp_Obsidian" Content="Obsidian Markdown"/>
+                                        <CheckBox Name="chkApp_Notion" Content="Notion Desktop"/>
+                                        <CheckBox Name="chkApp_LibreOffice" Content="LibreOffice Suite"/>
+                                        <CheckBox Name="chkApp_Sumatra" Content="SumatraPDF"/>
+                                        <CheckBox Name="chkApp_AdobeReader" Content="Adobe Acrobat Reader"/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </Grid>
+                    </ScrollViewer>
 
-                        <Separator Background="#334155" Margin="0,5,0,12"/>
-                        <WrapPanel>
-                            <Button Name="btnInstallSelectedApps" Content="📥 Install Selected Apps (WinGet)" Background="#0284C7" Height="36" Margin="0,0,10,8" Padding="15,0"/>
-                            <Button Name="btnUpgradeAllApps" Content="🔄 Upgrade All Installed Apps" Margin="0,0,10,8" Height="36"/>
-                            <Button Name="btnOpenDebloaterInGui" Content="🗑️ Debloat Preinstalled Windows Apps" Background="#7F1D1D" Margin="0,0,10,8" Height="36"/>
-                        </WrapPanel>
-                    </StackPanel>
-                </ScrollViewer>
+                    <!-- Row 2: Sticky Bottom Action Bar -->
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                        <DockPanel LastChildFill="False">
+                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                <Button Name="btnInstallSelectedApps" Content="📥 Install Software Terpilih (WinGet)" Background="#0284C7" Height="38" Padding="16,0" Margin="0,0,10,0"/>
+                                <Button Name="btnUpgradeAllApps" Content="🔄 Upgrade Semua Software" Height="38" Padding="14,0" Margin="0,0,10,0"/>
+                                <Button Name="btnOpenDebloaterInGui" Content="🗑️ Debloat Windows Apps (Appx)" Background="#7F1D1D" Height="38" Padding="14,0"/>
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="Instalasi WinGet resmi, aman &amp; tanpa adware" Foreground="#10B981" VerticalAlignment="Center" FontSize="12"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </TabItem>
 
-            <!-- TAB 4: VOLTPLAY (GAME TUNER) -->
+            <!-- TAB 4: VOLTPLAY (GAME TUNER & DISCOVERY) -->
             <TabItem Header="Game Tuner">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="15">
-                        <TextBlock Text="VoltPlay: In-Game Performance &amp; Stutter Eliminator" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                        <TextBlock Text="Penyelarasan konfigurasi game dinamis berdasarkan profil kartu grafis NVIDIA RTX 4060 Laptop:" Foreground="#94A3B8" Margin="0,0,0,12"/>
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                        <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,12">
-                            <StackPanel>
-                                <CheckBox Name="chkGameRDR2" Content="Red Dead Redemption 2: Async Compute On &amp; MaxTexUpgrades 10 (Anti-Texture Pop-In)" IsChecked="True"/>
-                                <CheckBox Name="chkGameW3" Content="The Witcher 3 DX12: Matikan HairWorks (Hemat 25% GPU), Foliage 2, &amp; Siapkan DLSS-G" IsChecked="True"/>
-                                <CheckBox Name="chkGameHSR" Content="Honkai: Star Rail: Kunci 60 FPS Stabil &amp; Anti-Aliasing Seimbang (Bebas Thermal Throttle)" IsChecked="True"/>
-                                <CheckBox Name="chkGameGenshin" Content="Genshin Impact: Kunci 60 FPS Stabil &amp; Crowd Density Medium" IsChecked="True"/>
-                                <CheckBox Name="chkGameSteamHighPerf" Content="Daftarkan Seluruh Game Steam Terdeteksi ke GPU High Performance (Windows Settings)" IsChecked="True"/>
-                            </StackPanel>
-                        </Border>
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="VoltPlay: In-Game Performance &amp; Anti-Stutter Engine" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,4"/>
+                            <TextBlock Text="Penyelarasan konfigurasi game dinamis &amp; prioritas kartu grafis discrete (RTX 4060):" FontSize="12" Foreground="#94A3B8"/>
+                        </StackPanel>
+                    </Border>
 
-                        <Button Name="btnApplyGameTuning" Content="🎮 Terapkan Optimasi Game Terpilih" Background="#0284C7" Height="38" Width="280" HorizontalAlignment="Left"/>
-                    </StackPanel>
-                </ScrollViewer>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="0,0,0,10">
+                            <!-- Discovered Games Dynamic List -->
+                            <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="🎮 Seluruh Game Terdeteksi di Windows Ini ($($Hardware.DiscoveredGames.Count) Game)" FontSize="14" FontWeight="Bold" Foreground="#A78BFA" Margin="0,0,0,8"/>
+                                    <StackPanel Name="pnlDiscoveredGamesList">
+                                        <!-- Populated dynamically in code -->
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- In-Game Engine Profiles -->
+                            <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="⚙️ Penyelarasan Konfigurasi In-Game Khusus" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                    <CheckBox Name="chkGameRDR2" Content="Red Dead Redemption 2: Async Compute On &amp; MaxTexUpgrades 10 (Anti-Texture Pop-In)" IsChecked="True"/>
+                                    <CheckBox Name="chkGameW3" Content="The Witcher 3 DX12: Matikan HairWorks (Hemat 25% GPU), Foliage 2, &amp; Siapkan DLSS-G" IsChecked="True"/>
+                                    <CheckBox Name="chkGameHSR" Content="Honkai: Star Rail: Kunci 60 FPS Stabil &amp; Anti-Aliasing Seimbang (Bebas Thermal Throttle)" IsChecked="True"/>
+                                    <CheckBox Name="chkGameGenshin" Content="Genshin Impact: Kunci 60 FPS Stabil &amp; Crowd Density Medium" IsChecked="True"/>
+                                    <CheckBox Name="chkGameSteamHighPerf" Content="Daftarkan Seluruh Game Terdeteksi ke GPU High Performance Windows Settings" IsChecked="True"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Sticky Bottom Action Bar -->
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
+                        <DockPanel LastChildFill="False">
+                            <Button Name="btnApplyGameTuning" Content="🎮 Terapkan Optimasi Game Terpilih" Background="#0284C7" Height="38" Padding="18,0"/>
+                            <TextBlock DockPanel.Dock="Right" Text="Aman, reversibel &amp; teruji anti-stutter" Foreground="#94A3B8" VerticalAlignment="Center" FontSize="12"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </TabItem>
 
             <!-- TAB 5: VOLTCLEAN -->
             <TabItem Header="VoltClean">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="15">
-                        <TextBlock Text="Pembersih Disk Lintas-Drive Dinamis (VoltClean)" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
-                        <TextBlock Text="Aman terlindungi Dynamic Process Guard (melewati file yang sedang dikunci aplikasi/game):" Foreground="#94A3B8" Margin="0,0,0,12"/>
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                        <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
+                    <Border Grid.Row="0" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="VoltClean: Pembersih Disk &amp; Cache Lintas-Drive Dinamis" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,4"/>
+                            <TextBlock Text="Membersihkan file sementara, cache DirectX shader, dump crash, dan cache game lintas C: dan D: tanpa merusak data penting." FontSize="12" Foreground="#94A3B8"/>
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <Border Background="#0F172A" CornerRadius="6" Padding="12" BorderBrush="#334155" BorderThickness="1">
                             <StackPanel>
-                                <CheckBox Name="chkCleanTemp" Content="Temporary Files (%TEMP% &amp; C:\Windows\Temp)" IsChecked="True"/>
-                                <CheckBox Name="chkCleanUpdates" Content="Windows Update Download Cache (C:\Windows\SoftwareDistribution\Download)" IsChecked="True"/>
-                                <CheckBox Name="chkCleanShaders" Content="DirectX &amp; GPU Shader Cache (NVIDIA DX/GL, AMD, Intel, D3DSCache)" IsChecked="True"/>
-                                <CheckBox Name="chkCleanSteamShaders" Content="Steam Shader Caches across ALL Drives (C:, D:)" IsChecked="True"/>
-                                <CheckBox Name="chkCleanCrash" Content="Windows Crash Dumps &amp; WER Minidumps" IsChecked="True"/>
-                                <CheckBox Name="chkCleanRecycle" Content="Kosongkan Recycle Bin pada Seluruh Drive" IsChecked="True"/>
-                                <CheckBox Name="chkCleanDism" Content="DISM Component Store Cleanup (ResetBase - Hapus Update Usang)" IsChecked="False"/>
+                                <TextBlock Text="Target Pembersihan Sampah" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                <CheckBox Name="chkCleanUserTemp" Content="File Sementara Pengguna (%TEMP%)" IsChecked="True"/>
+                                <CheckBox Name="chkCleanWinTemp" Content="File Sementara Windows (C:\Windows\Temp)" IsChecked="True"/>
+                                <CheckBox Name="chkCleanD3DShader" Content="DirectX &amp; Graphic Shader Cache Lintas Seluruh Drive" IsChecked="True"/>
+                                <CheckBox Name="chkCleanNvidiaShader" Content="NVIDIA / AMD GPU Shader Cache" IsChecked="True"/>
+                                <CheckBox Name="chkCleanCrashDumps" Content="Windows Error Reporting &amp; Crash Dumps" IsChecked="True"/>
+                                <CheckBox Name="chkCleanRecycleBin" Content="Kosongkan Recycle Bin Lintas Drive" IsChecked="False"/>
+                                <CheckBox Name="chkCleanDism" Content="Jalankan DISM Component Cleanup ResetBase (Kompilasi Update Bersih)" IsChecked="False"/>
                             </StackPanel>
                         </Border>
+                    </ScrollViewer>
 
+                    <Border Grid.Row="2" Background="#0F172A" CornerRadius="6" Padding="12,10" Margin="0,10,0,0" BorderBrush="#334155" BorderThickness="1">
                         <WrapPanel>
-                            <Button Name="btnRunVoltClean" Content="🧹 Bersihkan Sampah Sekarang (VoltClean)" Background="#0284C7" Height="38" Padding="15,0" Margin="0,0,10,0"/>
-                            <Button Name="btnDismOnly" Content="📦 Jalankan DISM Cleanup ResetBase Saja" Height="38" Padding="15,0"/>
+                            <Button Name="btnRunVoltClean" Content="🧹 Bersihkan Disk Sekarang" Background="#0284C7" Height="38" Padding="18,0" Margin="0,0,10,0"/>
+                            <Button Name="btnDismOnly" Content="⚙️ DISM Component Cleanup Saja" Height="38" Padding="14,0"/>
                         </WrapPanel>
-                    </StackPanel>
-                </ScrollViewer>
+                    </Border>
+                </Grid>
             </TabItem>
 
-            <!-- TAB 6: SYSTEM HEALTH & FEATURES -->
+            <!-- TAB 6: SYSTEM HEALTH & DIAGNOSTICS -->
             <TabItem Header="System Health">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
-                        <TextBlock Text="Windows Features (Fitur Opsional)" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
-                        <WrapPanel Margin="0,0,0,15">
-                            <Button Name="btnFeatDirectPlay" Content="Aktifkan DirectPlay (Game Jadul)" Margin="0,0,8,8" Height="32"/>
-                            <Button Name="btnFeatSandbox" Content="Aktifkan Windows Sandbox" Margin="0,0,8,8" Height="32"/>
-                            <Button Name="btnFeatWSL" Content="Aktifkan WSL2 (Linux Subsystem)" Margin="0,0,8,8" Height="32"/>
-                        </WrapPanel>
+                        <TextBlock Text="Diagnostik Kesehatan Sistem &amp; Fitur Opsional Windows" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,10"/>
+                        <Border Background="#0F172A" CornerRadius="6" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
+                            <StackPanel>
+                                <TextBlock Text="Perbaikan Integritas File &amp; Jaringan" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                <WrapPanel Margin="0,0,0,12">
+                                    <Button Name="btnHealthSFC" Content="🔍 Jalankan SFC Scannow" Margin="0,0,8,8" Height="34"/>
+                                    <Button Name="btnHealthDISM" Content="🛡️ Jalankan DISM RestoreHealth" Margin="0,0,8,8" Height="34"/>
+                                    <Button Name="btnHealthNetReset" Content="🌐 Reset TCP/IP &amp; Winsock" Margin="0,0,8,8" Height="34"/>
+                                    <Button Name="btnHealthIconCache" Content="🎨 Rebuild Icon &amp; Thumbnail Cache" Margin="0,0,8,8" Height="34"/>
+                                </WrapPanel>
 
-                        <TextBlock Text="Diagnostik &amp; Perbaikan Sistem Windows" FontSize="15" FontWeight="Bold" Foreground="#38BDF8" Margin="0,5,0,8"/>
-                        <WrapPanel Margin="0,0,0,10">
-                            <Button Name="btnHealthSfc" Content="🛡️ SFC /scannow" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnHealthDism" Content="🔧 DISM /RestoreHealth" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnHealthResetWU" Content="🔄 Reset Windows Update" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnHealthResetNet" Content="📶 Reset Network &amp; Winsock" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnHealthRebuildIcons" Content="🖼️ Rebuild Icon Cache" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnHealthTrimRam" Content="🧠 Trim Standby Memory" Margin="0,0,8,8" Height="34"/>
-                            <Button Name="btnHealthDnsBench" Content="🌐 Benchmark Latensi DNS" Margin="0,0,8,8" Height="34"/>
-                        </WrapPanel>
+                                <Separator Background="#334155" Margin="0,5,0,12"/>
+                                <TextBlock Text="Fitur Windows Opsional Gaming &amp; Dev" FontSize="14" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,8"/>
+                                <WrapPanel>
+                                    <Button Name="btnFeatDirectPlay" Content="🎮 Aktifkan DirectPlay (Game Jadul)" Margin="0,0,8,8" Height="34"/>
+                                    <Button Name="btnFeatSandbox" Content="📦 Aktifkan Windows Sandbox" Margin="0,0,8,8" Height="34"/>
+                                    <Button Name="btnFeatWSL" Content="🐧 Pasang WSL2 Linux Core" Margin="0,0,8,8" Height="34"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -1602,21 +2010,25 @@ function Show-VoltGUI {
             <TabItem Header="VoltUndo">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
-                        <TextBlock Text="VoltUndo: Sistem Pemulihan 1-Klik Mandiri" FontSize="16" FontWeight="Bold" Foreground="#FBBF24" Margin="0,0,0,6"/>
-                        <TextBlock Text="Pilih snapshot cadangan yang ingin dikembalikan ke kondisi semula:" Foreground="#94A3B8" Margin="0,0,0,10"/>
+                        <TextBlock Text="VoltUndo: Sistem Pemulihan Snapshot 1-Klik" FontSize="16" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,0,6"/>
+                        <TextBlock Text="Pilih snapshot cadangan registri &amp; konfigurasi game yang ingin dipulihkan:" Foreground="#94A3B8" Margin="0,0,0,12"/>
 
-                        <ComboBox Name="cmbSnapshots" Height="32" Background="#0F172A" Foreground="#F8FAFC" Margin="0,0,0,15"/>
-
-                        <WrapPanel>
-                            <Button Name="btnRestoreSelectedSnap" Content="↩️ Restore Snapshot Terpilih (1-Klik Rollback)" Background="#DC2626" Height="38" Padding="15,0" Margin="0,0,10,0"/>
-                            <Button Name="btnRefreshSnaps" Content="🔄 Muat Ulang Daftar" Height="38" Padding="15,0"/>
-                        </WrapPanel>
+                        <Border Background="#0F172A" CornerRadius="6" Padding="15" BorderBrush="#334155" BorderThickness="1" Margin="0,0,0,15">
+                            <StackPanel>
+                                <TextBlock Text="Daftar Snapshot Tersimpan:" FontSize="13" Foreground="#94A3B8" Margin="0,0,0,6"/>
+                                <ComboBox Name="cmbSnapshots" Height="32" Margin="0,0,0,15" Background="#1E293B" Foreground="#000000"/>
+                                <WrapPanel>
+                                    <Button Name="btnRestoreSelectedSnapshot" Content="↩️ Restore Snapshot Terpilih" Background="#D97706" Height="36" Padding="18,0" Margin="0,0,10,0"/>
+                                    <Button Name="btnTakeNewSnapshot" Content="📸 Buat Snapshot Baru Sekarang" Background="#0284C7" Height="36" Padding="14,0"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
         </TabControl>
 
-        <!-- Embedded Activity Log Panel (Bottom of Window) -->
+        <!-- Monospace Console Log -->
         <Border Grid.Row="2" Background="#0B132B" CornerRadius="6" BorderBrush="#334155" BorderThickness="1" Margin="0,10,0,0">
             <TextBox Name="txtConsoleLog" Background="Transparent" Foreground="#38BDF8" FontFamily="Consolas" FontSize="12" BorderThickness="0" IsReadOnly="True" VerticalScrollBarVisibility="Auto" Margin="8" Text="[Ready] Voltune GUI Initialized. No terminal typing needed."/>
         </Border>
@@ -1639,6 +2051,43 @@ function Show-VoltGUI {
         [System.Windows.Threading.Dispatcher]::CurrentDispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::Background)
     }
 
+    # Populate Discovered Games List in Game Tuner Tab
+    $pnlGames = $window.FindName("pnlDiscoveredGamesList")
+    if ($pnlGames -and $Hardware.DiscoveredGames.Count -gt 0) {
+        $pnlGames.Children.Clear()
+        foreach ($k in $Hardware.DiscoveredGames.Keys) {
+            $g = $Hardware.DiscoveredGames[$k]
+            $sp = New-Object System.Windows.Controls.StackPanel
+            $sp.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+            $sp.Margin = New-Object System.Windows.Thickness(0, 3, 0, 3)
+
+            $tbBadge = New-Object System.Windows.Controls.TextBlock
+            $tbBadge.Text = "[$($g.Platform)] "
+            $tbBadge.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#38BDF8")
+            $tbBadge.FontWeight = [System.Windows.FontWeights]::Bold
+
+            $tbName = New-Object System.Windows.Controls.TextBlock
+            $tbName.Text = "$($g.Name) "
+            $tbName.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#F8FAFC")
+
+            $tbPath = New-Object System.Windows.Controls.TextBlock
+            $pathStr = if ($g.InstallPath) { "($($g.InstallPath))" } elseif ($g.ConfigFile) { "($($g.ConfigFile))" } else { "" }
+            $tbPath.Text = $pathStr
+            $tbPath.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#64748B")
+            $tbPath.FontSize = 11
+
+            $sp.Children.Add($tbBadge) | Out-Null
+            $sp.Children.Add($tbName) | Out-Null
+            $sp.Children.Add($tbPath) | Out-Null
+            $pnlGames.Children.Add($sp) | Out-Null
+        }
+    } elseif ($pnlGames) {
+        $tbNone = New-Object System.Windows.Controls.TextBlock
+        $tbNone.Text = "Tidak ada game terdeteksi secara otomatis."
+        $tbNone.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#64748B")
+        $pnlGames.Children.Add($tbNone) | Out-Null
+    }
+
     # Populate Snapshots in ComboBox
     $PopulateSnaps = {
         $cmb = $window.FindName("cmbSnapshots")
@@ -1650,6 +2099,25 @@ function Show-VoltGUI {
         if ($cmb.Items.Count -gt 0) { $cmb.SelectedIndex = 0 }
     }
     & $PopulateSnaps
+
+    # Function to apply Live System State to Checkboxes
+    $SyncLiveState = {
+        & $AppendLog "Mendeteksi konfigurasi Windows saat ini..."
+        $state = Get-VoltWindowsTweakState
+        $activeCount = 0
+        foreach ($key in $state.Keys) {
+            $chk = $window.FindName($key)
+            if ($chk) {
+                $chk.IsChecked = [bool]$state[$key]
+                if ($state[$key]) { $activeCount++ }
+            }
+        }
+        & $AppendLog "[System State] Terdeteksi $activeCount dari $($state.Count) tweaks aktif di Windows Anda saat ini."
+        & $AppendLog "[Info] Status centang di atas merefleksikan kondisi Windows sekarang. Pilih preset untuk mengubah, lalu klik 'Terapkan'."
+    }
+
+    # Sync on Startup
+    & $SyncLiveState
 
     # Dashboard Button Handlers
     $window.FindName("btnDashSnapshot").Add_Click({
@@ -1683,7 +2151,11 @@ function Show-VoltGUI {
         & $AppendLog "[✓] Skema daya Balanced (Hemat/Standar) aktif!"
     })
 
-    # Tweaks Presets
+    # Tweaks Presets Handlers (Only checks/unchecks, never executes blindly)
+    $window.FindName("btnLiveState").Add_Click({
+        & $SyncLiveState
+    })
+
     $window.FindName("btnPresetRecommended").Add_Click({
         $window.FindName("chkHags").IsChecked = $true
         $window.FindName("chkGameMode").IsChecked = $true
@@ -1706,7 +2178,7 @@ function Show-VoltGUI {
         $window.FindName("chkStartSearch").IsChecked = $true
         $window.FindName("chkAdId").IsChecked = $true
         $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Recommended Preset dipilih. Lu bisa customize checkbox lalu klik 'Terapkan'."
+        & $AppendLog "[Preset] Recommended Preset dipilih. Silakan periksa atau sesuaikan centang, lalu klik 'Terapkan Tweaks Terpilih'."
     })
 
     $window.FindName("btnPresetLaptop").Add_Click({
@@ -1722,12 +2194,16 @@ function Show-VoltGUI {
         $window.FindName("chkClassicMenu").IsChecked = $true
         $window.FindName("chkFileExt").IsChecked = $true
         $window.FindName("chkThisPC").IsChecked = $true
+        $window.FindName("chkHiddenFiles").IsChecked = $false
         $window.FindName("chkCleanTaskbar").IsChecked = $true
+        $window.FindName("chkCleanQuickAccess").IsChecked = $true
         $window.FindName("chkTelemetry").IsChecked = $true
         $window.FindName("chkRecall").IsChecked = $true
         $window.FindName("chkCopilot").IsChecked = $true
         $window.FindName("chkStartSearch").IsChecked = $true
-        & $AppendLog "[Preset] Laptop Gaming Preset dipilih (Battery-aware & Game Priority)."
+        $window.FindName("chkAdId").IsChecked = $true
+        $window.FindName("chkDeliveryOpt").IsChecked = $true
+        & $AppendLog "[Preset] Laptop Gaming Preset dipilih (Battery-aware & Game Priority). Silakan sesuaikan centang lalu klik 'Terapkan'."
     })
 
     $window.FindName("btnPresetDesktop").Add_Click({
@@ -1752,7 +2228,7 @@ function Show-VoltGUI {
         $window.FindName("chkStartSearch").IsChecked = $true
         $window.FindName("chkAdId").IsChecked = $true
         $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Desktop Max Preset dipilih (Semua performa aktif, Power Throttling Off)."
+        & $AppendLog "[Preset] Desktop Max Preset dipilih (Semua performa aktif). Silakan sesuaikan centang lalu klik 'Terapkan'."
     })
 
     $window.FindName("btnPresetMinimal").Add_Click({
@@ -1777,7 +2253,7 @@ function Show-VoltGUI {
         $window.FindName("chkStartSearch").IsChecked = $true
         $window.FindName("chkAdId").IsChecked = $true
         $window.FindName("chkDeliveryOpt").IsChecked = $true
-        & $AppendLog "[Preset] Minimal Privacy & QoL Preset dipilih."
+        & $AppendLog "[Preset] Minimal Privacy & QoL Preset dipilih. Silakan sesuaikan centang lalu klik 'Terapkan'."
     })
 
     $window.FindName("btnPresetClear").Add_Click({
@@ -1786,6 +2262,14 @@ function Show-VoltGUI {
                      "chkCleanTaskbar","chkCleanQuickAccess","chkTelemetry","chkRecall","chkCopilot","chkStartSearch","chkAdId","chkDeliveryOpt")
         foreach ($c in $chkList) { $window.FindName($c).IsChecked = $false }
         & $AppendLog "[Preset] Semua centang tweaks dibersihkan."
+    })
+
+    $window.FindName("btnQuickSnapshot").Add_Click({
+        & $AppendLog "Membuat snapshot registri & game config VoltUndo..."
+        $dir = New-VoltBackupSnapshot -Hardware $Hardware
+        & $AppendLog "[✓] Snapshot berhasil disimpan di: $dir"
+        & $PopulateSnaps
+        [System.Windows.MessageBox]::Show("Snapshot berhasil dibuat!", "VoltUndo", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
     # Run Selected Tweaks Button
@@ -1805,7 +2289,7 @@ function Show-VoltGUI {
         }
         if ($window.FindName("chkDefender").IsChecked) {
             Add-VoltDefenderGameExclusions -Hardware $Hardware
-            & $AppendLog "[✓] Folder game ditambahkan ke Defender Exclusion."
+            & $AppendLog "[✓] Folder game didaftarkan ke Defender Exclusion."
         }
         if ($window.FindName("chkNetwork").IsChecked) {
             Set-VoltNetworkGamingTweaks
@@ -1855,72 +2339,133 @@ function Show-VoltGUI {
         if ($window.FindName("chkTelemetry").IsChecked) { Set-VoltPrivacyAndTelemetry -Revert }
         if ($window.FindName("chkCleanTaskbar").IsChecked) { Set-VoltTaskbarAndStartTweaks -Revert }
         if ($window.FindName("chkPowerThrottle").IsChecked) { Set-VoltPowerThrottlingOff -Disable }
-        & $AppendLog "[✓] Tweaks terpilih telah dikembalikan ke standar."
+        & $AppendLog "[✓] Tweaks terpilih telah dikembalikan ke standar Windows."
         [System.Windows.MessageBox]::Show("Tweaks terpilih berhasil di-revert!", "Voltune", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
-    # Install Apps Presets
+    # Comprehensive App Catalog Map (Chris Titus WinUtil Style)
     $appIdMap = @{
+        # Runtimes
         "chkApp_VCRedist"    = @{ Name = "Visual C++ 2015-2022 AIO"; Id = "Microsoft.VCRedist.2015+.x64" }
         "chkApp_DirectX"     = @{ Name = "DirectX End-User Runtimes"; Id = "Microsoft.DirectX" }
-        "chkApp_DotNet"      = @{ Name = ".NET Desktop Runtime 8"; Id = "Microsoft.DotNet.DesktopRuntime.8" }
+        "chkApp_DotNet8"     = @{ Name = ".NET 8 Desktop Runtime"; Id = "Microsoft.DotNet.DesktopRuntime.8" }
+        "chkApp_DotNet9"     = @{ Name = ".NET 9 Desktop Runtime"; Id = "Microsoft.DotNet.DesktopRuntime.9" }
+        "chkApp_Java"        = @{ Name = "Oracle Java JRE"; Id = "Oracle.JavaRuntimeEnvironment" }
+        "chkApp_OpenAL"      = @{ Name = "OpenAL Audio Engine"; Id = "Creative.OpenAL" }
+
+        # Browsers
+        "chkApp_Brave"       = @{ Name = "Brave Browser"; Id = "Brave.Brave" }
+        "chkApp_Chrome"      = @{ Name = "Google Chrome"; Id = "Google.Chrome" }
+        "chkApp_Firefox"     = @{ Name = "Mozilla Firefox"; Id = "Mozilla.Firefox" }
+        "chkApp_Thorium"     = @{ Name = "Thorium Browser"; Id = "Alex313031.Thorium" }
+        "chkApp_Librewolf"   = @{ Name = "LibreWolf Browser"; Id = "LibreWolf.LibreWolf" }
+        "chkApp_Edge"        = @{ Name = "Microsoft Edge"; Id = "Microsoft.Edge" }
+        "chkApp_OperaGX"     = @{ Name = "Opera GX Gaming Browser"; Id = "Opera.OperaGX" }
+        "chkApp_Vivaldi"     = @{ Name = "Vivaldi Browser"; Id = "VivaldiTechnologies.Vivaldi" }
+        "chkApp_Floorp"      = @{ Name = "Floorp Browser"; Id = "Floorp.Floorp" }
+
+        # Gaming & Launchers
         "chkApp_Steam"       = @{ Name = "Steam"; Id = "Valve.Steam" }
         "chkApp_Epic"        = @{ Name = "Epic Games Launcher"; Id = "EpicGames.EpicGamesLauncher" }
         "chkApp_Discord"     = @{ Name = "Discord"; Id = "Discord.Discord" }
         "chkApp_OBS"         = @{ Name = "OBS Studio"; Id = "OBSProject.OBSStudio" }
-        "chkApp_RTSS"        = @{ Name = "RivaTuner Statistics (RTSS)"; Id = "Guru3D.RTSS" }
+        "chkApp_EA"          = @{ Name = "EA Desktop"; Id = "ElectronicArts.EADesktop" }
+        "chkApp_Ubisoft"     = @{ Name = "Ubisoft Connect"; Id = "Ubisoft.Connect" }
+        "chkApp_GOG"         = @{ Name = "GOG Galaxy"; Id = "GOG.Galaxy" }
+        "chkApp_BattleNet"   = @{ Name = "Blizzard Battle.net"; Id = "Blizzard.BattleNet" }
+        "chkApp_Prism"       = @{ Name = "Prism Launcher (Minecraft)"; Id = "PrismLauncher.PrismLauncher" }
+        "chkApp_Heroic"      = @{ Name = "Heroic Games Launcher"; Id = "HeroicGamesLauncher.HeroicGamesLauncher" }
+
+        # Hardware & Monitoring
         "chkApp_Afterburner" = @{ Name = "MSI Afterburner"; Id = "Guru3D.Afterburner" }
+        "chkApp_RTSS"        = @{ Name = "RivaTuner Statistics (RTSS)"; Id = "Guru3D.RTSS" }
+        "chkApp_CPUZ"        = @{ Name = "CPUID CPU-Z"; Id = "CPUID.CPU-Z" }
+        "chkApp_GPUZ"        = @{ Name = "TechPowerUp GPU-Z"; Id = "TechPowerUp.GPU-Z" }
+        "chkApp_HWMonitor"   = @{ Name = "CPUID HWMonitor"; Id = "CPUID.HWMonitor" }
+        "chkApp_HWiNFO"      = @{ Name = "REALiX HWiNFO"; Id = "REALiX.HWiNFO" }
+        "chkApp_DiskInfo"    = @{ Name = "CrystalDiskInfo"; Id = "CrystalDewWorld.CrystalDiskInfo" }
+        "chkApp_DiskMark"    = @{ Name = "CrystalDiskMark"; Id = "CrystalDewWorld.CrystalDiskMark" }
+        "chkApp_FanControl"  = @{ Name = "Fan Control"; Id = "Rem0o.FanControl" }
+
+        # Development
         "chkApp_VSCode"      = @{ Name = "Visual Studio Code"; Id = "Microsoft.VisualStudioCode" }
         "chkApp_Git"         = @{ Name = "Git for Windows"; Id = "Git.Git" }
         "chkApp_Terminal"    = @{ Name = "Windows Terminal"; Id = "Microsoft.WindowsTerminal" }
         "chkApp_Node"        = @{ Name = "Node.js LTS"; Id = "OpenJS.NodeJS.LTS" }
         "chkApp_Python"      = @{ Name = "Python 3.12"; Id = "Python.Python.3.12" }
+        "chkApp_Docker"      = @{ Name = "Docker Desktop"; Id = "Docker.DockerDesktop" }
+        "chkApp_Postman"     = @{ Name = "Postman"; Id = "Postman.Postman" }
+        "chkApp_PowerToys"   = @{ Name = "Microsoft PowerToys"; Id = "Microsoft.PowerToys" }
+        "chkApp_NotepadPP"   = @{ Name = "Notepad++"; Id = "Notepad++.Notepad++" }
+        "chkApp_DBeaver"     = @{ Name = "DBeaver Community"; Id = "dbeaver.dbeaver" }
+
+        # System Utilities
         "chkApp_7Zip"        = @{ Name = "7-Zip"; Id = "7zip.7zip" }
-        "chkApp_Brave"       = @{ Name = "Brave Browser"; Id = "Brave.Brave" }
-        "chkApp_Chrome"      = @{ Name = "Google Chrome"; Id = "Google.Chrome" }
-        "chkApp_Firefox"     = @{ Name = "Mozilla Firefox"; Id = "Mozilla.Firefox" }
+        "chkApp_WinRAR"      = @{ Name = "WinRAR"; Id = "RARLab.WinRAR" }
         "chkApp_Everything"  = @{ Name = "Everything Search"; Id = "voidtools.Everything" }
+        "chkApp_ShareX"      = @{ Name = "ShareX Screen Capture"; Id = "ShareX.ShareX" }
+        "chkApp_BleachBit"   = @{ Name = "BleachBit Cleaner"; Id = "BleachBit.BleachBit" }
+        "chkApp_Revo"        = @{ Name = "Revo Uninstaller"; Id = "RevoUninstaller.RevoUninstaller" }
+        "chkApp_WizTree"     = @{ Name = "WizTree Disk Space Analyzer"; Id = "AntibodySoftware.WizTree" }
+        "chkApp_Rufus"       = @{ Name = "Rufus USB Creator"; Id = "Rufus.Rufus" }
+
+        # Media & Audio
         "chkApp_VLC"         = @{ Name = "VLC Media Player"; Id = "VideoLAN.VLC" }
-        "chkApp_HWMonitor"   = @{ Name = "CPUID HWMonitor"; Id = "CPUID.HWMonitor" }
-        "chkApp_BleachBit"   = @{ Name = "BleachBit"; Id = "BleachBit.BleachBit" }
+        "chkApp_MPV"         = @{ Name = "MPV Player"; Id = "mpv.mpv" }
+        "chkApp_Spotify"     = @{ Name = "Spotify"; Id = "Spotify.Spotify" }
+        "chkApp_Audacity"    = @{ Name = "Audacity Audio Editor"; Id = "Audacity.Audacity" }
+        "chkApp_HandBrake"   = @{ Name = "HandBrake Video Transcoder"; Id = "HandBrake.HandBrake" }
+        "chkApp_KLite"       = @{ Name = "K-Lite Codec Pack Standard"; Id = "CodecGuide.K-LiteCodecPack.Standard" }
+
+        # Documents & Office
+        "chkApp_Obsidian"    = @{ Name = "Obsidian"; Id = "Obsidian.Obsidian" }
+        "chkApp_Notion"      = @{ Name = "Notion Desktop"; Id = "Notion.Notion" }
+        "chkApp_LibreOffice" = @{ Name = "LibreOffice"; Id = "TheDocumentFoundation.LibreOffice" }
+        "chkApp_Sumatra"     = @{ Name = "SumatraPDF"; Id = "SumatraPDF.SumatraPDF" }
+        "chkApp_AdobeReader" = @{ Name = "Adobe Acrobat Reader"; Id = "Adobe.Acrobat.Reader.64-bit" }
     }
 
+    # App Presets Buttons Handlers
     $window.FindName("btnAppsRuntimes").Add_Click({
-        $window.FindName("chkApp_VCRedist").IsChecked = $true
-        $window.FindName("chkApp_DirectX").IsChecked = $true
-        $window.FindName("chkApp_DotNet").IsChecked = $true
-        & $AppendLog "[Apps] Preset Runtimes dipilih."
+        @("chkApp_VCRedist","chkApp_DirectX","chkApp_DotNet8","chkApp_DotNet9") | ForEach-Object {
+            $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
+        }
+        & $AppendLog "[Apps] Preset Game Runtimes dipilih."
     })
 
     $window.FindName("btnAppsGaming").Add_Click({
-        $window.FindName("chkApp_Steam").IsChecked = $true
-        $window.FindName("chkApp_Epic").IsChecked = $true
-        $window.FindName("chkApp_Discord").IsChecked = $true
-        $window.FindName("chkApp_OBS").IsChecked = $true
-        $window.FindName("chkApp_RTSS").IsChecked = $true
-        $window.FindName("chkApp_Afterburner").IsChecked = $true
-        & $AppendLog "[Apps] Preset Gaming Bundle dipilih."
+        @("chkApp_Steam","chkApp_Epic","chkApp_Discord","chkApp_OBS","chkApp_RTSS","chkApp_Afterburner","chkApp_7Zip") | ForEach-Object {
+            $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
+        }
+        & $AppendLog "[Apps] Preset Gaming Essentials dipilih."
     })
 
     $window.FindName("btnAppsDev").Add_Click({
-        $window.FindName("chkApp_VSCode").IsChecked = $true
-        $window.FindName("chkApp_Git").IsChecked = $true
-        $window.FindName("chkApp_Terminal").IsChecked = $true
-        $window.FindName("chkApp_Node").IsChecked = $true
-        $window.FindName("chkApp_Python").IsChecked = $true
-        $window.FindName("chkApp_7Zip").IsChecked = $true
-        & $AppendLog "[Apps] Preset Dev Tools Bundle dipilih."
+        @("chkApp_VSCode","chkApp_Git","chkApp_Terminal","chkApp_Node","chkApp_Python","chkApp_7Zip","chkApp_PowerToys") | ForEach-Object {
+            $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
+        }
+        & $AppendLog "[Apps] Preset Developer Suite dipilih."
     })
 
     $window.FindName("btnAppsBrowsers").Add_Click({
-        $window.FindName("chkApp_Brave").IsChecked = $true
-        $window.FindName("chkApp_Chrome").IsChecked = $true
-        $window.FindName("chkApp_Firefox").IsChecked = $true
+        @("chkApp_Brave","chkApp_Chrome","chkApp_Firefox") | ForEach-Object {
+            $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
+        }
         & $AppendLog "[Apps] Preset Web Browsers dipilih."
     })
 
+    $window.FindName("btnAppsUtilities").Add_Click({
+        @("chkApp_7Zip","chkApp_Everything","chkApp_HWiNFO","chkApp_BleachBit","chkApp_WizTree") | ForEach-Object {
+            $c = $window.FindName($_); if ($c) { $c.IsChecked = $true }
+        }
+        & $AppendLog "[Apps] Preset System Utilities dipilih."
+    })
+
     $window.FindName("btnAppsClear").Add_Click({
-        foreach ($k in $appIdMap.Keys) { $window.FindName($k).IsChecked = $false }
+        foreach ($k in $appIdMap.Keys) {
+            $c = $window.FindName($k)
+            if ($c) { $c.IsChecked = $false }
+        }
         & $AppendLog "[Apps] Seluruh centang software dibersihkan."
     })
 
@@ -1998,13 +2543,13 @@ function Show-VoltGUI {
         }
         if ($window.FindName("chkGameSteamHighPerf").IsChecked) {
             Optimize-VoltPlayGames -Hardware $Hardware -TargetGameKey "ALL"
-            & $AppendLog "[✓] Game Steam didaftarkan ke GPU High Performance."
+            & $AppendLog "[✓] Seluruh game terdeteksi didaftarkan ke GPU High Performance."
         }
         & $AppendLog "[✓] Penyelarasan setting game selesai!"
         [System.Windows.MessageBox]::Show("Penyelarasan setting in-game selesai!", "VoltPlay", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
-    # VoltClean Button
+    # VoltClean Buttons
     $window.FindName("btnRunVoltClean").Add_Click({
         & $AppendLog "Menjalankan pembersihan sampah disk VoltClean..."
         $freed = Invoke-VoltClean -Hardware $Hardware
@@ -2026,6 +2571,30 @@ function Show-VoltGUI {
     })
 
     # System Health & Features Buttons
+    $window.FindName("btnHealthSFC").Add_Click({
+        & $AppendLog "Menjalankan SFC Scannow (System File Checker)..."
+        & sfc.exe /scannow
+        & $AppendLog "[✓] Pemeriksaan SFC selesai."
+    })
+
+    $window.FindName("btnHealthDISM").Add_Click({
+        & $AppendLog "Menjalankan DISM RestoreHealth..."
+        & dism.exe /Online /Cleanup-Image /RestoreHealth
+        & $AppendLog "[✓] Pemulihan DISM selesai."
+    })
+
+    $window.FindName("btnHealthNetReset").Add_Click({
+        & $AppendLog "Mereset Winsock & TCP/IP stack..."
+        Reset-VoltNetwork
+        & $AppendLog "[✓] Jaringan berhasil direset."
+    })
+
+    $window.FindName("btnHealthIconCache").Add_Click({
+        & $AppendLog "Membangun ulang Icon & Thumbnail Cache..."
+        Rebuild-VoltIconCache
+        & $AppendLog "[✓] Icon cache dibangun ulang."
+    })
+
     $window.FindName("btnFeatDirectPlay").Add_Click({
         & $AppendLog "Mengaktifkan DirectPlay..."
         Set-VoltWindowsFeatureDirectPlay
@@ -2039,77 +2608,29 @@ function Show-VoltGUI {
     })
 
     $window.FindName("btnFeatWSL").Add_Click({
-        & $AppendLog "Mengaktifkan WSL2..."
+        & $AppendLog "Memasang WSL kernel core..."
         Set-VoltWindowsFeatureWSL
-        & $AppendLog "[✓] WSL2 diaktifkan!"
+        & $AppendLog "[✓] WSL kernel core dipasang!"
     })
 
-    $window.FindName("btnHealthSfc").Add_Click({
-        & $AppendLog "Menjalankan SFC /scannow (harap tunggu)..."
-        & sfc.exe /scannow
-        & $AppendLog "[✓] SFC /scannow selesai!"
-    })
-
-    $window.FindName("btnHealthDism").Add_Click({
-        & $AppendLog "Menjalankan DISM /RestoreHealth..."
-        & dism.exe /Online /Cleanup-Image /RestoreHealth
-        & $AppendLog "[✓] DISM /RestoreHealth selesai!"
-    })
-
-    $window.FindName("btnHealthResetWU").Add_Click({
-        & $AppendLog "Mereset komponen Windows Update..."
-        Reset-VoltWindowsUpdate
-        & $AppendLog "[✓] Windows Update di-reset!"
-    })
-
-    $window.FindName("btnHealthResetNet").Add_Click({
-        & $AppendLog "Mereset TCP/IP stack & Winsock..."
-        Reset-VoltNetwork
-        & $AppendLog "[✓] Network & Winsock di-reset!"
-    })
-
-    $window.FindName("btnHealthRebuildIcons").Add_Click({
-        & $AppendLog "Membangun ulang Icon & Thumbnail Cache..."
-        Rebuild-VoltIconCache
-        & $AppendLog "[✓] Icon Cache diperbarui!"
-    })
-
-    $window.FindName("btnHealthTrimRam").Add_Click({
-        & $AppendLog "Membersihkan Standby Memory & Working Set RAM..."
-        Clear-VoltStandbyMemory
-        & $AppendLog "[✓] Standby Memory dibersihkan!"
-    })
-
-    $window.FindName("btnHealthDnsBench").Add_Click({
-        & $AppendLog "Menjalankan Benchmark Latensi DNS..."
-        $resolvers = @(@{ Name = "Cloudflare"; IP = "1.1.1.1" }, @{ Name = "Google"; IP = "8.8.8.8" }, @{ Name = "Quad9"; IP = "9.9.9.9" })
-        foreach ($r in $resolvers) {
-            $ping = Test-Connection -ComputerName $r.IP -Count 2 -ErrorAction SilentlyContinue
-            if ($ping) {
-                $avg = [math]::Round(($ping | Measure-Object -Property ResponseTime -Average).Average)
-                & $AppendLog "  -> $($r.Name) ($($r.IP)): Rata-rata Ping = $avg ms"
-            }
-        }
-        & ipconfig.exe /flushdns | Out-Null
-        & $AppendLog "[✓] DNS Cache di-flush!"
-    })
-
-    # VoltUndo Buttons
-    $window.FindName("btnRefreshSnaps").Add_Click({
+    # VoltUndo Tab Buttons
+    $window.FindName("btnTakeNewSnapshot").Add_Click({
+        & $AppendLog "Membuat snapshot registri & game config VoltUndo..."
+        $dir = New-VoltBackupSnapshot -Hardware $Hardware
+        & $AppendLog "[✓] Snapshot berhasil disimpan di: $dir"
         & $PopulateSnaps
-        & $AppendLog "[VoltUndo] Daftar snapshot diperbarui."
+        [System.Windows.MessageBox]::Show("Snapshot berhasil dibuat!", "VoltUndo", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
     })
 
-    $window.FindName("btnRestoreSelectedSnap").Add_Click({
+    $window.FindName("btnRestoreSelectedSnapshot").Add_Click({
         $cmb = $window.FindName("cmbSnapshots")
         if (-not $cmb.SelectedItem) {
-            [System.Windows.MessageBox]::Show("Silakan pilih snapshot yang ingin di-restore.", "VoltUndo", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+            [System.Windows.MessageBox]::Show("Pilih snapshot yang ingin dipulihkan terlebih dahulu.", "VoltUndo", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
             return
         }
-
         $snapName = ($cmb.SelectedItem -split " ")[0]
         $snapDir = Join-Path $Script:BackupDir $snapName
-        $confirm = [System.Windows.MessageBox]::Show("Apakah lu yakin ingin mengembalikan sistem ke snapshot '$snapName'?", "Konfirmasi Rollback", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        $confirm = [System.Windows.MessageBox]::Show("Apakah Anda yakin ingin mengembalikan sistem ke snapshot '$snapName'?", "Konfirmasi Rollback", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
         if ($confirm -eq [System.Windows.MessageBoxResult]::Yes) {
             & $AppendLog "Memulihkan sistem dari snapshot: $snapName..."
             $res = Restore-VoltSnapshotByPath -SnapshotDir $snapDir
@@ -2124,8 +2645,6 @@ function Show-VoltGUI {
 
     $window.ShowDialog() | Out-Null
 }
-
-# ------------------------------------------------------------------------------
 # 21. INTERACTIVE UI & DYNAMIC DISPLAY (CLI FALLBACK)
 # ------------------------------------------------------------------------------
 function Show-VoltBanner {
@@ -2168,17 +2687,14 @@ function Show-VoltSpecs ($hw) {
 }
 
 # ------------------------------------------------------------------------------
-# 22. ENTRYPOINT LOGIC
+# ------------------------------------------------------------------------------
+# 22. ENTRYPOINT LOGIC (DEFAULT: MODERN NATIVE WPF GUI)
 # ------------------------------------------------------------------------------
 Invoke-VoltElevation -Bypass:$NoElevation
 
 $hwProfile = Get-VoltHardwareProfile
 
-if ($GUI) {
-    Show-VoltGUI -Hardware $hwProfile
-    exit 0
-}
-
+# Headless / Scripted Modes
 if ($AutoOptimize) {
     New-VoltRestorePoint -Description "Voltune-Pre-AutoOptimize"
     New-VoltBackupSnapshot -Hardware $hwProfile
@@ -2206,132 +2722,138 @@ if ($UndoOnly) {
     exit 0
 }
 
-# Interactive Loop (Terminal / TUI)
-$running = $true
-while ($running) {
-    Show-VoltBanner
-    Show-VoltSpecs $hwProfile
+# If user explicitly specified CLI/TUI switch, run interactive terminal loop
+if ($CLI -or $TUI) {
+    $running = $true
+    while ($running) {
+        Show-VoltBanner
+        Show-VoltSpecs $hwProfile
 
-    Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor DarkCyan
-    Write-Host " PILIH KATEGORI TINDAKAN (Ketik angka lalu tekan Enter):" -ForegroundColor Yellow
-    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkCyan
-    Write-Host " [G] 🖥️ Buka Voltune Modern Native GUI (100% Lewat GUI Tanpa Perlu Ngetik)" -ForegroundColor Green
-    Write-Host " [1] 🚀 Optimasi Lengkap (Rekomendasi Terima Beres)" -ForegroundColor White
-    Write-Host " [2] 🎮 VoltPlay: Sesuaikan Setting Game Khusus" -ForegroundColor White
-    Write-Host " [3] 🧹 VoltClean: Pembersih Disk & Cache Lintas-Drive" -ForegroundColor White
-    Write-Host " [4] 🛠️ Windows 11 QoL & Explorer Tweaks (Chris Titus Style)" -ForegroundColor White
-    Write-Host " [5] 🛡️ Privasi, Telemetri & Background Bloat Killer" -ForegroundColor White
-    Write-Host " [6] ⚡ TCP/IP Gaming Latency & Raw Input (Zero-VPN Harm)" -ForegroundColor White
-    Write-Host " [7] ⚙️ Windows Services Optimizer (Safe Gaming Profile)" -ForegroundColor White
-    Write-Host " [8] 🔒 Windows Update Control (Security Updates Only Profile)" -ForegroundColor White
-    Write-Host " [9] 📦 Game Runtimes & Software Catalog (WinGet One-Click)" -ForegroundColor White
-    Write-Host " [10] 🧩 Windows Optional Features (DirectPlay, WSL2, Sandbox)" -ForegroundColor White
-    Write-Host " [11] 💾 Reclaim Ruang SSD (Toggle Hibernasi ~$($hwProfile.HiberfilSizeGB) GB)" -ForegroundColor White
-    Write-Host " [12] 🔧 System Health & Repair Diagnostics (SFC, DISM, Network Reset)" -ForegroundColor White
-    Write-Host " [U] ↩️ VoltUndo: Kembalikan Semua Settingan ke Semula (1-Klik Reset)" -ForegroundColor Yellow
-    Write-Host " [0] Keluar" -ForegroundColor Red
-    Write-Host "================================================================================" -ForegroundColor DarkCyan
+        Write-Host "`n--------------------------------------------------------------------------------" -ForegroundColor DarkCyan
+        Write-Host " PILIH KATEGORI TINDAKAN (Ketik angka lalu tekan Enter):" -ForegroundColor Yellow
+        Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkCyan
+        Write-Host " [G] 🖥️ Buka Voltune Modern Native GUI (100% Lewat GUI Tanpa Perlu Ngetik)" -ForegroundColor Green
+        Write-Host " [1] 🚀 Optimasi Lengkap (Rekomendasi Terima Beres)" -ForegroundColor White
+        Write-Host " [2] 🎮 VoltPlay: Sesuaikan Setting Game Khusus" -ForegroundColor White
+        Write-Host " [3] 🧹 VoltClean: Pembersih Disk & Cache Lintas-Drive" -ForegroundColor White
+        Write-Host " [4] 🛠️ Windows 11 QoL & Explorer Tweaks (Chris Titus Style)" -ForegroundColor White
+        Write-Host " [5] 🛡️ Privasi, Telemetri & Background Bloat Killer" -ForegroundColor White
+        Write-Host " [6] ⚡ TCP/IP Gaming Latency & Raw Input (Zero-VPN Harm)" -ForegroundColor White
+        Write-Host " [7] ⚙️ Windows Services Optimizer (Safe Gaming Profile)" -ForegroundColor White
+        Write-Host " [8] 🔒 Windows Update Control (Security Updates Only Profile)" -ForegroundColor White
+        Write-Host " [9] 📦 Game Runtimes & Software Catalog (WinGet One-Click)" -ForegroundColor White
+        Write-Host " [10] 🧩 Windows Optional Features (DirectPlay, WSL2, Sandbox)" -ForegroundColor White
+        Write-Host " [11] 💾 Reclaim Ruang SSD (Toggle Hibernasi ~$($hwProfile.HiberfilSizeGB) GB)" -ForegroundColor White
+        Write-Host " [12] 🔧 System Health & Repair Diagnostics (SFC, DISM, Network Reset)" -ForegroundColor White
+        Write-Host " [U] ↩️ VoltUndo: Kembalikan Semua Settingan ke Semula (1-Klik Reset)" -ForegroundColor Yellow
+        Write-Host " [0] Keluar" -ForegroundColor Red
+        Write-Host "================================================================================" -ForegroundColor DarkCyan
 
-    $choice = Read-Host "`nPilihan lu [0-12 / G / U]"
-    switch ($choice.ToUpper()) {
-        "G" {
-            Show-VoltGUI -Hardware $hwProfile
-            $hwProfile = Get-VoltHardwareProfile
-        }
-        "1" {
-            New-VoltRestorePoint -Description "Voltune-Pre-AutoOptimize"
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Optimize-VoltWindowsCore
-            Optimize-VoltDualGPU -Hardware $hwProfile
-            Set-VoltRawMouseInput
-            Add-VoltDefenderGameExclusions -Hardware $Hardware
-            Set-VoltPrivacyAndTelemetry
-            Set-VoltNetworkGamingTweaks
-            Optimize-VoltServices
-            Set-VoltWindowsUpdateProfile
-            Set-VoltExplorerTweaks
-            Set-VoltTaskbarAndStartTweaks
-            Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
-            Write-Host "`n[✓] Seluruh optimasi lengkap berhasil diterapkan! Tekan Enter untuk lanjut..." -ForegroundColor Green
-            Read-Host
-        }
-        "2" {
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "3" {
-            Invoke-VoltClean -Hardware $hwProfile
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "4" {
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Set-VoltClassicContextMenu
-            Set-VoltExplorerTweaks
-            Set-VoltTaskbarAndStartTweaks
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "5" {
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Set-VoltPrivacyAndTelemetry
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "6" {
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Set-VoltNetworkGamingTweaks
-            Set-VoltRawMouseInput
-            Add-VoltDefenderGameExclusions -Hardware $hwProfile
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "7" {
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Optimize-VoltServices
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "8" {
-            New-VoltBackupSnapshot -Hardware $hwProfile
-            Set-VoltWindowsUpdateProfile
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "9" {
-            Install-VoltPackageById -Name "Visual C++ 2015-2022 AIO" -Id "Microsoft.VCRedist.2015+.x64"
-            Install-VoltPackageById -Name "DirectX End-User Runtimes" -Id "Microsoft.DirectX"
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "10" {
-            Set-VoltWindowsFeatureDirectPlay
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "11" {
-            Toggle-VoltHibernation -Hardware $hwProfile
-            $hwProfile = Get-VoltHardwareProfile
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "12" {
-            & sfc.exe /scannow
-            & dism.exe /Online /Cleanup-Image /RestoreHealth
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "U" {
-            Invoke-VoltUndo
-            $hwProfile = Get-VoltHardwareProfile
-            Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
-            Read-Host
-        }
-        "0" {
-            $running = $false
-            Write-Host "`n[VoltPlay & Voltune] Keluar. Tetap dingin & gaspol!" -ForegroundColor Cyan
+        $choice = Read-Host "`nPilihan Anda [0-12 / G / U]"
+        switch ($choice.ToUpper()) {
+            "G" {
+                Show-VoltGUI -Hardware $hwProfile
+                $hwProfile = Get-VoltHardwareProfile
+            }
+            "1" {
+                New-VoltRestorePoint -Description "Voltune-Pre-AutoOptimize"
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Optimize-VoltWindowsCore
+                Optimize-VoltDualGPU -Hardware $hwProfile
+                Set-VoltRawMouseInput
+                Add-VoltDefenderGameExclusions -Hardware $hwProfile
+                Set-VoltPrivacyAndTelemetry
+                Set-VoltNetworkGamingTweaks
+                Optimize-VoltServices
+                Set-VoltWindowsUpdateProfile
+                Set-VoltExplorerTweaks
+                Set-VoltTaskbarAndStartTweaks
+                Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
+                Write-Host "`n[✓] Seluruh optimasi lengkap berhasil diterapkan! Tekan Enter untuk lanjut..." -ForegroundColor Green
+                Read-Host
+            }
+            "2" {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Optimize-VoltPlayGames -Hardware $hwProfile -TargetGameKey "ALL"
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "3" {
+                Invoke-VoltClean -Hardware $hwProfile
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "4" {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Set-VoltClassicContextMenu
+                Set-VoltExplorerTweaks
+                Set-VoltTaskbarAndStartTweaks
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "5" {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Set-VoltPrivacyAndTelemetry
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "6" {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Set-VoltNetworkGamingTweaks
+                Set-VoltRawMouseInput
+                Add-VoltDefenderGameExclusions -Hardware $hwProfile
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "7" {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Optimize-VoltServices
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "8" {
+                New-VoltBackupSnapshot -Hardware $hwProfile
+                Set-VoltWindowsUpdateProfile
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "9" {
+                Install-VoltPackageById -Name "Visual C++ 2015-2022 AIO" -Id "Microsoft.VCRedist.2015+.x64"
+                Install-VoltPackageById -Name "DirectX End-User Runtimes" -Id "Microsoft.DirectX"
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "10" {
+                Set-VoltWindowsFeatureDirectPlay
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "11" {
+                Toggle-VoltHibernation -Hardware $hwProfile
+                $hwProfile = Get-VoltHardwareProfile
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "12" {
+                & sfc.exe /scannow
+                & dism.exe /Online /Cleanup-Image /RestoreHealth
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "U" {
+                Invoke-VoltUndo
+                $hwProfile = Get-VoltHardwareProfile
+                Write-Host "`nTekan Enter untuk melanjutkan..." -ForegroundColor Gray
+                Read-Host
+            }
+            "0" {
+                $running = $false
+                Write-Host "`n[VoltPlay & Voltune] Keluar. Tetap dingin & gaspol!" -ForegroundColor Cyan
+            }
         }
     }
+    exit 0
 }
+
+# DEFAULT MODE: Direct Launch Modern Native WPF GUI (100% In-GUI, Zero CLI Typing)
+Show-VoltGUI -Hardware $hwProfile
