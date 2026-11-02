@@ -1,4 +1,4 @@
-﻿$voltDir = Split-Path $PSScriptRoot -Parent
+$voltDir = Split-Path $PSScriptRoot -Parent
 $scriptPath = Join-Path $voltDir "voltune.ps1"
 $content = Get-Content -Path $scriptPath -Raw
 
@@ -22,7 +22,7 @@ if ($content -match '(?s)\[xml\]\$xaml\s*=\s*@"(.*?)"@') {
     $window = [System.Windows.Markup.XamlReader]::Load($reader)
     if ($window) {
         Write-Host "[OK] WPF Window loaded successfully! Title: $($window.Title)" -ForegroundColor Green
-        Write-Host "     Controls found: btnGuiAutoOptimize=$([bool]$window.FindName('btnGuiAutoOptimize')), chkHags=$([bool]$window.FindName('chkHags'))" -ForegroundColor Green
+        Write-Host "     Controls found: btnRunSelectedTweaks=$([bool]$window.FindName('btnRunSelectedTweaks')), btnInstallSelectedApps=$([bool]$window.FindName('btnInstallSelectedApps')), txtConsoleLog=$([bool]$window.FindName('txtConsoleLog'))" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] Failed to instantiate window" -ForegroundColor Red
         exit 1

@@ -2,6 +2,15 @@
 
 All notable changes to Voltune are documented here.
 
+## [3.1.0-Universal] - 2026-11-02
+
+### Added
+- **100% In-GUI Architecture (Zero CLI Prompts):** Overhauled `Show-VoltGUI` so every workflow (tweaks, software installation, debloater, disk cleanup, repair diagnostics, snapshot rollback) operates strictly within the native desktop window. Zero terminal typing or `Read-Host` prompts while GUI is running.
+- **Customizable Tweaks with Presets (Chris Titus Style):** 21 granular tweak checkboxes across Gaming, QoL, Privacy, Services, and Updates paired with 1-click presets (`Recommended`, `Laptop Gaming`, `Desktop Max`, `Minimal Privacy`, `Clear All`). Users can toggle any item before clicking `Run Selected Tweaks` or `Undo Selected Tweaks`.
+- **WinGet Multi-Select Application Catalog (Chris Titus Style):** 21 popular software packages categorized into 3 columns (Game Runtimes, Gaming & Launchers, Dev Tools, System Utilities, Web Browsers) with preset buttons (`All Runtimes`, `Gaming Bundle`, `Dev Tools`, `Web Browsers`) and 1-click background WinGet installer.
+- **Embedded Real-Time Activity Log:** Bottom activity console in GUI streaming live timestamps, execution progress, and status without UI freezing.
+- **In-GUI Snapshot Rollback & Debloater:** ComboBox snapshot browser with 1-click restoration confirmation dialog, and integrated UWP Appx debloater.
+
 ## [3.0.0-Ultimate] - 2026-11-02
 
 ### Added
