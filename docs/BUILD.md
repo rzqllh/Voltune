@@ -1,119 +1,75 @@
-# Build and Release
+# Panduan Pengujian & Distribusi Voltune (v3.3.0-Universal)
 
-Voltune can be used in two ways: run directly from Python source, or build a standalone Windows executable. For normal end users, the GitHub Release `.exe` is the intended path. For development, run from source.
+Voltune v3.3 adalah toolkit mandiri berbasis PowerShell dan WPF XAML yang **tidak memerlukan tahapan kompilasi binary biner eksternal**. Dokumen ini menjelaskan cara menjalankan, menguji, dan memvalidasi Voltune di lingkungan pengembangan.
 
-## 1. Run from source
+---
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python .\voltune.py
-```
+## 1. Menjalankan Voltune Secara Lokal
 
-Voltune requests Administrator privileges when a privileged operation needs them.
-
-## 2. Editable install for development
+### Mode Standar (Modern Native WPF GUI):
+Buka PowerShell dengan hak Administrator, arahkan ke direktori repositori, lalu jalankan:
 
 ```powershell
-python -m pip install -e .
-voltune
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+.\voltune.ps1
 ```
 
-## 3. Build a standalone EXE
-
-Install build dependencies first:
+### Mode Terminal Interaktif (CLI Fallback):
+Untuk lingkungan remote SSH, Windows Sandbox, atau sistem tanpa antarmuka grafis:
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+.\voltune.ps1 -CLI
 ```
 
-Recommended build command:
+---
+
+## 2. Menjalankan Suite Pengujian Otomatis
+
+Voltune dilengkapi dengan skrip pengujian mandiri di folder `tests/` untuk memvalidasi syntax, integrasi hardware, pemuatan XAML GUI, dan keandalan backup.
+
+### A. Uji Validasi Syntax & Profiling Hardware
+Menguji apakah seluruh skrip valid secara leksikal di mesin Windows PowerShell 5.1 (bawaan Windows 10/11) dan PowerShell 7 (pwsh), serta memverifikasi fungsi pemindaian spek hardware:
 
 ```powershell
-python -m PyInstaller --noconfirm --clean --onefile --uac-admin --name "Voltune" --paths src voltune.py
+# Jalankan di Windows PowerShell 5.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests/test_voltune_syntax.ps1"
+
+# Jalankan di PowerShell 7 (jika terpasang)
+pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "tests/test_voltune_syntax.ps1"
 ```
 
-Output:
-
-```text
-dist\Voltune.exe
-```
-
-### Short alternative command
-
-If the build environment is already clean and dependencies are installed, this shorter command is also valid:
+### B. Uji Inisialisasi WPF GUI & Elemen XAML
+Memastikan dokumen XAML valid, dapat di-parse oleh `System.Windows.Markup.XamlReader`, dan seluruh kontrol interaktif utama (`btnRunSelectedTweaks`, `btnInstallSelectedApps`, `txtConsoleLog`) berhasil di-instansiasi:
 
 ```powershell
-python -m PyInstaller voltune.py --onefile --uac-admin --name "Voltune" --paths src
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests/test_gui_load.ps1"
 ```
 
-This is the Voltune equivalent of the older single-file command:
+### C. Uji Snapshot Backup & Restore Engine (VoltUndo)
+Memastikan pembuatan folder snapshot di `%LOCALAPPDATA%\Voltune\Backups\`, ekspor registri (`.reg`), dan pembuatan `manifest.json` berjalan tanpa hambatan:
 
 ```powershell
-python -m PyInstaller voltune.py --onefile --uac-admin --name "Voltune" --paths src
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tests/test_voltundo_snapshot.ps1"
 ```
 
-The important Voltune-specific addition is `--paths src`, because the installable package lives under `src/voltune`.
+---
 
-## 4. Test the built EXE locally
+## 3. Standar Encoding & Integritas Berkas
 
-Before publishing a release, test the actual executable rather than assuming a successful build means a working application.
+> ⚠️ **SANGAT PENTING (ATURAN ENCODING):**
+> Seluruh berkas skrip PowerShell (`.ps1`) di repositori ini **WAJIB** disimpan dalam format **UTF-8 with BOM (`utf-8-sig`)**.
+
+* **Alasan Teknis:** Mesin parser bawaan Windows PowerShell 5.1 (`powershell.exe`) secara default membaca berkas teks non-BOM menggunakan ANSI code page lokal sistem (misalnya Windows-1252 di Windows versi regional tertentu). Karakter multibyte seperti simbol centang (`✓` / `\xE2\x9C\x93`) akan didekode secara keliru menjadi byte `0x93` (karakter quote ganda kiri `“`), yang merusak batas string dan memicu error parsing ampersand (`&`).
+* Dengan menyertakan UTF-8 BOM (`EF BB BF`), Windows PowerShell 5.1 secara otomatis mengenali berkas sebagai UTF-8 murni.
+
+---
+
+## 4. Distribusi Instan (One-Liner Web)
+
+Voltune didistribusikan langsung dari branch `main` GitHub melalui URL raw GitHub:
 
 ```powershell
-.\dist\Voltune.exe
+irm https://raw.githubusercontent.com/rzqllh/Voltune/main/voltune.ps1 | iex
 ```
 
-At minimum, complete `docs/WINDOWS_TEST_CHECKLIST.md` on a Windows 11 machine and verify:
-
-- UAC elevation works.
-- Main menu renders correctly.
-- Safe Mode is enabled by default.
-- Back/cancel/end-session returns to a freshly cleared main menu.
-- Power Plans can be detected without creating duplicate Ultimate Performance plans.
-- DNS benchmark, switch, verification, and restore work on the active adapter.
-- Gaming Session can restore the original service and power-plan state.
-- A forced close during Gaming Session is recovered on the next launch.
-- System Dashboard works without WMIC.
-- `config.json`, `state.json`, and `logs/` are created beside the executable as intended.
-
-## 5. Create a checksum locally
-
-```powershell
-$hash = (Get-FileHash .\dist\Voltune.exe -Algorithm SHA256).Hash.ToLower()
-"$hash  Voltune.exe" | Set-Content -Encoding ascii .\dist\SHA256SUMS.txt
-```
-
-Users can verify it with:
-
-```powershell
-Get-FileHash .\Voltune.exe -Algorithm SHA256
-```
-
-## 6. Tagged GitHub releases
-
-The release workflow runs automatically for tags matching `v*`.
-
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-GitHub Actions will:
-
-1. install dependencies;
-2. run the test suite;
-3. build the Windows executable;
-4. calculate SHA-256;
-5. upload build artifacts;
-6. create/update the GitHub Release with generated release notes;
-7. attach `Voltune.exe` and `SHA256SUMS.txt`.
-
-Do not tag a release until the Windows integration checklist passes.
-
-## 7. Unsigned EXE / SmartScreen note
-
-Voltune is not code-signed by default. Windows SmartScreen or antivirus products may warn about newly built PyInstaller executables, especially when a release has little reputation. Do not instruct users to disable Defender or SmartScreen. Document the unsigned status, publish the SHA-256 checksum, and keep release artifacts built by GitHub Actions for reproducibility.
-
-Code signing can be added later if a trusted signing certificate is available.
+Setiap commit ke branch `main` langsung tersedia bagi pengguna one-liner tanpa perlu mengunggah release asset manual.

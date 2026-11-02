@@ -1,45 +1,60 @@
-# Safety Model
+# Model Keamanan & Jaminan Stabilitas Voltune (v3.3.0-Universal)
 
-Voltune is designed around **Safe by default. Reversible by design.**
+Voltune dibangun di atas filosofi: **Safe by default. Reversible by design. Zero VPN harm.**
 
-## Safe Mode and Dry Run
+Setiap optimasi, pembersihan disk, dan penyesuaian layanan diatur secara ketat untuk mencegah kerusakan pada Windows maupun software kerja pengguna.
 
-Safe Mode is enabled by default. It keeps experimental and higher-impact operations out of the normal path. Dry Run simulates supported mutations. CLI developer cleanup is also dry-run unless `--apply` is explicitly supplied.
+---
 
-## Filesystem safety engine
+## 1. Jaminan Keamanan Jaringan (Zero-VPN Harm)
 
-All vNext filesystem deletion features use `FilesystemSafety` before mutation. The policy:
+Salah satu masalah terbesar skrip optimasi Windows pihak ketiga adalah merusak rute jaringan atau koneksi VPN kantor ketika menerapkan optimasi TCP/IP. Voltune mencegah hal ini dengan menerapkan **Network Whitelist Filter**:
 
-- rejects empty paths and filesystem roots;
-- protects Windows/system roots and prevents deleting a parent that contains them;
-- blocks symlinks, junctions and other reparse points by default;
-- honors persistent user-protected paths even when a cleanup category is selected;
-- allows narrowly scoped exceptions for known cleanup roots such as a temp directory without authorizing the surrounding Windows tree;
-- estimates the candidate size before deletion and verifies whether deletion completed;
-- never follows symlinks during disk/developer scanning.
+- **Hanya Adapter Fisik:** Optimasi Nagle's Algorithm (`TcpAckFrequency = 1`, `TCPNoDelay = 1`) hanya diterapkan pada adapter jaringan Ethernet dan Wi-Fi fisik yang aktif.
+- **Strict VPN & Virtual Whitelist:**
+  - **Palo Alto GlobalProtect (`PanGPS`):** Dikenali dan dilewati secara mutlak dari segala modifikasi TCP/IP.
+  - **Cisco AnyConnect, OpenVPN, WireGuard, TAP Adapters:** Dilewati secara otomatis.
+  - **Virtual Network Adapters (Hyper-V, VMware, VirtualBox, WSL2):** Tidak pernah dimodifikasi.
+- **Network Throttling Index:** Menyetel `0xFFFFFFFF` dan `SystemResponsiveness = 0` pada Multimedia Class Scheduler (MMCSS) untuk menghilangkan pembatasan throughput paket saat bermain game online tanpa mengganggu rute gateway VPN.
 
-Configured protected paths include common local AI/developer data such as `.ollama`, `.claude`, `.cursor`, `.vscode`, and Docker data. Users can manage the list from **Protected Paths** or `config.json`.
+---
 
-## Developer cleanup guardrail
+## 2. Dynamic Process Guard pada Pembersih Disk (VoltClean)
 
-Developer artifacts such as `node_modules`, virtualenvs, `.next`, `target`, and build directories are candidates only. Projects active within `storage.recent_project_days` are marked recent and excluded from the default selection. Safe Mode refuses manual selection of recent artifacts.
+Saat membersihkan cache sementara Windows (`%TEMP%`, `C:\Windows\Temp`) dan shader cache (NVIDIA `DXCache`/`GLCache`, AMD, Intel, Steam shaders):
+- Voltune mendeteksi proses yang sedang aktif berjalan.
+- Berkas yang sedang dikunci oleh game atau browser aktif (Chrome, Edge, Firefox, Steam) secara otomatis dilewati dengan blok `try/catch` tanpa memaksa pemutusan proses atau menimbulkan error akses.
+- Direktori sistem penting dilindungi dari penghapusan tidak sengaja.
 
-## Installer cleanup guardrail
+---
 
-Executable installer formats are age/size filtered. Generic `.zip` and `.7z` files are not considered installers unless the filename contains installer-like tokens such as `setup`, `installer`, `driver`, or `update`.
+## 3. Profil Aman Layanan Windows (Safe Gaming Services)
 
-## Smart uninstaller guardrail
+Optimasi layanan latar belakang di Voltune hanya menargetkan layanan telemetri dan bloat non-kritis:
+- **Layanan yang Dioptimalkan:** `DiagTrack` (Connected User Experiences and Telemetry), `dmwappushservice` (WAP Push Message Routing), `MapsBroker` (Downloaded Maps Manager), `lfsvc` (Geolocation Service), `RemoteRegistry`, `RetailDemo`, `WerSvc` (Windows Error Reporting), dan layanan Xbox on-demand.
+- **Layanan yang Mutlak Dilindungi (Tidak Pernah Dimatikan):**
+  - **Audio & Komunikasi:** `Audiosrv` (Windows Audio), `AudioEndpointBuilder`.
+  - **Pencetakan & Dokumen:** `Spooler` (Print Spooler).
+  - **Jaringan & VPN:** `Dnscache`, `Dhcp`, `LanmanWorkstation`, `PanGPS` (GlobalProtect), `RasMan`.
+  - **Keamanan Sistem:** `WinDefend` (Microsoft Defender Antivirus), `KeyIso`, `VaultSvc`.
 
-Voltune reads standard Windows uninstall registry entries and launches the registered uninstaller without a command shell. MSI install actions are normalized to uninstall actions where possible. Leftover detection exposes only HIGH/MEDIUM candidates and never automatically deletes them.
+---
 
-## Existing mutation lifecycle
+## 4. Perlindungan Pembajakan Driver oleh Windows Update
 
-Where practical, established Windows changes use:
+Windows Update sering kali secara otomatis mengunduh driver GPU versi lama yang menimpa driver khusus NVIDIA/AMD yang sudah diinstal pengguna, menyebabkan game crash atau layar hitam.
+- Voltune mengonfigurasi kebijakan registri:
+  ```text
+  HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
+  "ExcludeWUDriversInQualityUpdate" = 1
+  ```
+- Kebijakan ini memastikan Windows Update hanya menerima pembaruan keamanan penting (*Security Updates Only*), tanpa merusak instalasi driver hardware resmi.
 
-`DETECT -> SNAPSHOT -> APPLY -> VERIFY -> RESTORE`
+---
 
-Examples include Gaming Session state, DNS settings, privacy policies, power plans and supported registry changes.
+## 5. Arsitektur Pemulihan Penuh (VoltUndo & System Restore)
 
-## Limitations
-
-No local utility can guarantee recovery from every Windows failure, power loss, third-party driver issue or external policy change. A restore history is not a substitute for normal backups. Destructive network reset and experimental BCD/network controls remain separated from routine maintenance.
+Sebelum optimasi massal diterapkan, Voltune secara otomatis menjalankan dua lapis pencadangan:
+1. **Windows System Restore Point:** Memanggil cmdlet `Checkpoint-Computer` untuk membuat titik pemulihan sistem Windows resmi berlabel `Voltune-PreOptimization`.
+2. **Snapshot Registri & Konfigurasi Berstempel Waktu:** Mengekspor seluruh kunci registri yang akan diubah ke format `.reg` di `%LOCALAPPDATA%\Voltune\Backups\Snapshot-<Timestamp>\`.
+3. **1-Klik Pemulihan Total:** Melalui tab *VoltUndo* di GUI atau opsi `[U]` di CLI, pengguna dapat mengimpor kembali seluruh snapshot registri dengan utilitas resmi Windows `reg.exe import` dan mengembalikan konfigurasi sistem ke kondisi semula secara sempurna.

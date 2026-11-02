@@ -2,6 +2,43 @@
 
 All notable changes to Voltune are documented here.
 
+## [3.3.0-Universal] - 2026-11-02
+
+### Added
+- **Atomic Tweaks Execution Engine:** Replaced coarse, grouped tweak executions with a granular per-item execution engine (`Set-VoltAtomicTweak`). Selecting specific checkboxes now applies or reverts only those exact settings without touching unselected categories.
+- **Clean Preset Blueprint Matrix:** Presets (`Recommended`, `Laptop Gaming`, `Desktop Max`, `Minimal Privacy`) now explicitly specify `$true`/`$false` across all 21 tweak items, ensuring choosing a new preset cleanly overwrites previous selections without checkbox accumulation.
+- **Dynamic Live OS State Inspection:** On GUI launch, `Get-VoltLiveTweakStates` queries Windows registry and system configurations in real-time, automatically checking only the tweaks that are currently active on the host OS.
+- **Clear All Tweaks Toggle:** Added a 1-click `Clear All` button (`btnClearTweaks`) to instantly deselect all checkboxes.
+- **Curated Post-Install Software Catalog (Chris Titus Style - 9 Categories):**
+  - Expanded WinGet software catalog with essential tools for fresh Windows installations:
+    - *Game Runtimes & Libraries:* Visual C++ 2005-2022 AIO (`VisualCppRedist AIO`), DirectX End-User Runtimes, .NET 8 Desktop Runtime.
+    - *Utilities & Archive:* NanaZip (modern Win11 context menu), 7-Zip, WinRAR, PowerToys, Everything Search, Process Hacker / System Informer, BleachBit.
+    - *Gaming Launchers & Overlays:* Steam, Epic Games, GOG Galaxy, EA App, Ubisoft Connect, Battle.net, Discord, OBS Studio, RivaTuner Statistics Server (RTSS), MSI Afterburner.
+    - *Hardware Drivers & Monitoring:* NVIDIA App, HWiNFO64, CPU-Z, GPU-Z.
+    - *Developer Tools:* VS Code, Git, PowerShell 7, Windows Terminal, Docker Desktop, Node.js LTS, Python 3.
+    - *Browsers:* Brave, Google Chrome, Mozilla Firefox, Microsoft Edge Dev.
+    - *Social & Media:* Telegram Desktop, WhatsApp, Spotify, VLC Media Player, HandBrake.
+- **Interactive Live App Search (`txtAppSearch`):** Real-time text filter that dynamically searches the software catalog by application name or WinGet ID as the user types.
+- **Asynchronous Background App Installer:** WinGet batch installations now execute asynchronously without freezing the WPF window, streaming stdout directly to the in-GUI activity console.
+- **Universal Dynamic Game Tuner Cards:**
+  - Removed static 4-game hardcoded XAML controls.
+  - Dynamically scans and generates interactive WPF card containers for all detected games across Steam (`libraryfolders.vdf`), HoYoPlay, Epic, GOG, Ubisoft, and standalone game directories.
+  - Generates per-game toggles for GPU Discrete High Performance, Windows Defender Exclusion (eliminating streaming micro-stutters), and engine-specific config tweaks.
+  - Added **Tambah Game Manual (.exe)** button with file browser dialog to register portable/custom games on the fly.
+- **Dark Fluent GUI Overhaul:**
+  - Modern dark Fluent palette (`#0F172A` background, `#1E293B` cards, `#38BDF8` cyan accents, `#3B82F6` primary buttons).
+  - 6 Visual System Telemetry Cards in Dashboard (CPU Hybrid P+E, GPU VRAM & TGP, Power Plan, Display & VRR FPS target, RAM, and Multi-Drive Storage).
+  - Sticky bottom action bars on all tabs to prevent controls from scrolling out of view.
+- **Zero CLI Prompt Default Mode:** Launching `.\voltune.ps1` defaults to the native WPF GUI without prompting in the console. Interactive CLI is preserved via `.\voltune.ps1 -CLI`.
+
+### Fixed
+- **GPU VRAM UInt32 Overflow:** Fixed WMI `AdapterRAM` clamping GPUs with >4GB VRAM to 4GB (4,294,967,295 bytes). Now detects accurate VRAM (e.g., RTX 4060 8.0 GB) via multi-path `nvidia-smi` and registry fallback.
+- **NVIDIA SMI Multi-Path Detection:** Added checks for `C:\Windows\System32\nvidia-smi.exe` used by Windows 11 DCH drivers in addition to `Program Files`.
+- **Laptop TGP Query Crash:** Fixed `nvidia-smi --query-gpu=power.limit` returning `[N/A]` on laptops by querying `enforced.power.limit`, accurately reporting laptop GPU TGP (e.g., 45W).
+- **Preset Checkbox Accumulation:** Selecting a new preset now unchecks items not included in that preset.
+- **`Select-Object: Property "Name" cannot be found`:** Fixed pipeline error in `Show-VoltSpecs` when parsing `OrderedDictionary` objects from `$hw.DiscoveredGames.Values`.
+- **PowerShell 5.1 UTF-8 BOM Parsing:** Standardized UTF-8 with BOM (`utf-8-sig`) across `.ps1` files to prevent non-ASCII characters from causing ampersand syntax errors in Windows PowerShell 5.1.
+
 ## [3.1.0-Universal] - 2026-11-02
 
 ### Added
